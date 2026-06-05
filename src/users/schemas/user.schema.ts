@@ -3,12 +3,32 @@ import { HydratedDocument } from 'mongoose';
 
 export type UserDocument = HydratedDocument<User>;
 
+export type UserRole = 'user' | 'super_admin';
+
+@Schema({ _id: false })
+export class UserSocialLinks {
+  @Prop({ type: String, trim: true })
+  website?: string;
+
+  @Prop({ type: String, trim: true })
+  linkedin?: string;
+
+  @Prop({ type: String, trim: true })
+  telegram?: string;
+
+  @Prop({ type: String, trim: true })
+  instagram?: string;
+}
+
+export const UserSocialLinksSchema =
+  SchemaFactory.createForClass(UserSocialLinks);
+
 @Schema({
   timestamps: true,
   toJSON: {
     virtuals: true,
-    transform: (_doc, ret) => {
-      ret.id = ret._id.toString();
+    transform: (_doc, ret: Record<string, unknown>) => {
+      ret.id = String(ret._id);
       delete ret._id;
       delete ret.__v;
       delete ret.refreshTokenHash;
@@ -17,32 +37,55 @@ export type UserDocument = HydratedDocument<User>;
   },
 })
 export class User {
-  @Prop({ required: true, unique: true, index: true })
+  @Prop({ type: String, required: true, unique: true, index: true })
   googleId!: string;
 
-  @Prop({ required: true, unique: true, lowercase: true, trim: true })
+  @Prop({ type: String, required: true, unique: true, lowercase: true, trim: true })
   email!: string;
 
-  @Prop({ required: true, trim: true })
+  @Prop({ type: String, required: true, unique: true, lowercase: true, trim: true })
+  username!: string;
+
+  @Prop({ type: String, required: true, trim: true })
   displayName!: string;
 
-  @Prop({ trim: true })
+  @Prop({ type: Boolean, default: false })
+  displayNameEdited!: boolean;
+
+  @Prop({ type: String, trim: true, maxlength: 280 })
+  bio?: string;
+
+  @Prop({ type: String, trim: true })
   firstName?: string;
 
-  @Prop({ trim: true })
+  @Prop({ type: String, trim: true })
   lastName?: string;
 
-  @Prop()
+  @Prop({ type: String })
   avatarUrl?: string;
 
-  @Prop({ select: false })
+  @Prop({ type: Boolean, default: false })
+  avatarEdited!: boolean;
+
+  @Prop({ type: UserSocialLinksSchema, default: {} })
+  social!: UserSocialLinks;
+
+  @Prop({ type: String, select: false })
   refreshTokenHash?: string;
 
-  @Prop({ default: 'google' })
+  @Prop({ type: String, default: 'google' })
   provider!: string;
 
-  @Prop({ default: Date.now })
+  @Prop({ type: Date, default: Date.now })
   lastLoginAt!: Date;
+
+  @Prop({
+    type: String,
+    enum: ['user', 'super_admin'],
+    default: 'user',
+    index: true,
+  })
+  role!: UserRole;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

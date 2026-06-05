@@ -9,12 +9,15 @@ NestJS + TypeScript + MongoDB backend. Google OAuth orqali ro'yxatdan o'tish va 
 
 ## O'rnatish
 
-```bash
+```powershell
 cd Maqolas-backend
-cp .env.example .env
-npm install
+copy .env.example .env
+.\install.ps1
 npm run start:dev
 ```
+
+> **Eslatma:** `nest` CLI shart emas. `npm run start:dev` — `tsx` orqali ishlaydi.  
+> Agar `npm install` SSL xatosi bersa, `.npmrc` da npmmirror registry ishlatiladi.
 
 API: `http://localhost:8000/api`
 
@@ -25,6 +28,15 @@ API: `http://localhost:8000/api`
 3. **Authorized redirect URIs**: `http://localhost:8000/api/auth/google/callback`
 4. **Authorized JavaScript origins**: `http://localhost:3000`
 5. Client ID va Secret ni `.env` ga qo'ying
+
+### `invalid_client` / Client secret invalid
+
+- [Google Cloud Console](https://console.cloud.google.com/apis/credentials) → **OAuth 2.0 Client IDs** → **Web application** turini tanlang
+- **Client ID** va **Client secret** bir xil clientdan bo'lishi kerak (secret yangilangan bo'lsa, eskisini ishlatmang)
+- **Authorized redirect URIs** (aniq): `http://localhost:8000/api/auth/google/callback`
+- **Authorized JavaScript origins**: `http://localhost:3000`
+- `.env` da qo'shtirnoq bo'lmasin, bo'sh joy qolmasin
+- O'zgartirgach: `npm run start:dev` ni qayta ishga tushiring
 
 ## Auth API
 
