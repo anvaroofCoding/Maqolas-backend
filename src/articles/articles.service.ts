@@ -1238,22 +1238,47 @@ export class ArticlesService {
     };
   }
 
-  async findPublishedBySlug(slug: string) {
-    const article = await this.articleModel
-      .findOneAndUpdate(
-        { slug, status: 'published' },
-        { $inc: { viewCount: 1 } },
-        { new: true },
-      )
-      .populate('authorId', 'displayName username avatarUrl bio')
-      .populate('categoryIds', 'name slug')
-      .exec();
+  async findPublishedBySlug(slug: string, options?: { trackView?: boolean }) {
+    const trackView = options?.trackView !== false;
+
+    const article = trackView
+      ? await this.articleModel
+          .findOneAndUpdate(
+            { slug, status: 'published' },
+            { $inc: { viewCount: 1 } },
+            { new: true },
+          )
+          .populate('authorId', 'displayName username avatarUrl bio')
+          .populate('categoryIds', 'name slug')
+          .exec()
+      : await this.articleModel
+          .findOne({ slug, status: 'published' })
+          .populate('authorId', 'displayName username avatarUrl bio')
+          .populate('categoryIds', 'name slug')
+          .exec();
 
     if (!article) {
       throw new NotFoundException('Maqola topilmadi');
     }
 
     return this.toPublicArticle(article);
+  }
+
+  async listPublishedForSitemap() {
+    const articles = await this.articleModel
+      .find({ status: 'published' })
+      .select('slug updatedAt publishedAt')
+      .sort({ publishedAt: -1 })
+      .lean()
+      .exec();
+
+    return articles.map((article) => ({
+      slug: article.slug,
+      updatedAt:
+        article.updatedAt?.toISOString() ??
+        article.publishedAt?.toISOString() ??
+        new Date().toISOString(),
+    }));
   }
 
   private async findPublishedArticleById(articleId: string) {

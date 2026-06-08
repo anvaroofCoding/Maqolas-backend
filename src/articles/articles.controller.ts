@@ -69,9 +69,20 @@ export class ArticlesController {
     );
   }
 
+  @Get('sitemap')
+  async getSitemap() {
+    const entries = await this.articlesService.listPublishedForSitemap();
+    return { entries };
+  }
+
   @Get('slug/:slug')
-  async getBySlug(@Param('slug') slug: string) {
-    const article = await this.articlesService.findPublishedBySlug(slug);
+  async getBySlug(
+    @Param('slug') slug: string,
+    @Query('meta') meta?: string,
+  ) {
+    const article = await this.articlesService.findPublishedBySlug(slug, {
+      trackView: meta !== '1',
+    });
     return { article };
   }
 
