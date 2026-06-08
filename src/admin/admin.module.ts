@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ArticleRequestsModule } from '../article-requests/article-requests.module';
 import { ArticlesModule } from '../articles/articles.module';
 import { AuthModule } from '../auth/auth.module';
 import { BannersModule } from '../banners/banners.module';
@@ -10,6 +11,7 @@ import { AdminController } from './admin.controller';
   imports: [
     AuthModule,
     ArticlesModule,
+    ArticleRequestsModule,
     CategoriesModule,
     BannersModule,
     ModerationModule,

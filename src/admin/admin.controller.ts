@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -22,6 +22,9 @@ import { bannerUploadOptions } from '../banners/banner-upload.config';
 import { CreateBannerDto } from '../banners/dto/create-banner.dto';
 import { UpdateBannerDto } from '../banners/dto/update-banner.dto';
 import { BannersService } from '../banners/banners.service';
+import { ArticleRequestsService } from '../article-requests/article-requests.service';
+import { ListArticleRequestsModerationDto } from '../article-requests/dto/list-article-requests-moderation.dto';
+import { RejectArticleRequestDto } from '../article-requests/dto/reject-article-request.dto';
 import { ArticlesService } from '../articles/articles.service';
 import { CategoriesService } from '../categories/categories.service';
 import { CreateCategoryDto } from '../categories/dto/create-category.dto';
@@ -31,6 +34,10 @@ import { AdminUpdateArticleDto } from './dto/admin-update-article.dto';
 import { ApproveArticleDto } from './dto/approve-article.dto';
 import { PinArticleDto } from './dto/pin-article.dto';
 import { CreateBanDto } from '../moderation/dto/create-ban.dto';
+import {
+  BatchCommentIdsDto,
+  RejectCommentsDto,
+} from '../moderation/dto/batch-comment-ids.dto';
 import { ModerationService } from '../moderation/moderation.service';
 import { RejectArticleDto } from './dto/reject-article.dto';
 
@@ -49,12 +56,31 @@ class ReviewQueueQueryDto {
   limit?: number = 20;
 }
 
+class CommentModerationQueryDto extends ReviewQueueQueryDto {
+  @IsOptional()
+  @IsIn(['pending', 'approved', 'rejected'])
+  status?: 'pending' | 'approved' | 'rejected';
+}
+
+class ListReportsQueryDto extends ReviewQueueQueryDto {
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+class ListUsersQueryDto extends ReviewQueueQueryDto {
+  @IsOptional()
+  @IsString()
+  search?: string;
+}
+
 @Controller('admin')
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles('super_admin')
 export class AdminController {
   constructor(
     private readonly articlesService: ArticlesService,
+    private readonly articleRequestsService: ArticleRequestsService,
     private readonly categoriesService: CategoriesService,
     private readonly bannersService: BannersService,
     private readonly moderationService: ModerationService,
@@ -175,11 +201,12 @@ export class AdminController {
   }
 
   @Get('reports')
-  async listReports(
-    @Query() query: ReviewQueueQueryDto,
-    @Query('status') status?: string,
-  ) {
-    return this.moderationService.listReports(query.page, query.limit, status);
+  async listReports(@Query() query: ListReportsQueryDto) {
+    return this.moderationService.listReports(
+      query.page,
+      query.limit,
+      query.status,
+    );
   }
 
   @Patch('reports/:id/dismiss')
@@ -190,12 +217,18 @@ export class AdminController {
     return this.moderationService.dismissReport(id, user.id);
   }
 
+  @Get('stats')
+  async getPlatformStats() {
+    return this.moderationService.getPlatformStats();
+  }
+
   @Get('users')
-  async listUsers(
-    @Query() query: ReviewQueueQueryDto,
-    @Query('search') search?: string,
-  ) {
-    return this.moderationService.listUsers(query.page, query.limit, search);
+  async listUsers(@Query() query: ListUsersQueryDto) {
+    return this.moderationService.listUsers(
+      query.page,
+      query.limit,
+      query.search,
+    );
   }
 
   @Post('users/:id/ban')
@@ -225,5 +258,61 @@ export class AdminController {
   @Delete('bans/ip/:ip')
   async unbanIp(@Param('ip') ip: string) {
     return this.moderationService.unbanIp(decodeURIComponent(ip));
+  }
+
+  @Get('comments')
+  async listComments(@Query() query: CommentModerationQueryDto) {
+    return this.moderationService.listCommentsForModeration(
+      query.page,
+      query.limit,
+      query.status ?? 'pending',
+    );
+  }
+
+  @Post('comments/approve')
+  async approveComments(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: BatchCommentIdsDto,
+  ) {
+    return this.moderationService.approveComments(dto.commentIds, user.id);
+  }
+
+  @Post('comments/reject')
+  async rejectComments(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: RejectCommentsDto,
+  ) {
+    return this.moderationService.rejectComments(
+      dto.commentIds,
+      user.id,
+      dto.reason,
+    );
+  }
+
+  @Post('comments/delete')
+  async deleteComments(@Body() dto: BatchCommentIdsDto) {
+    return this.moderationService.deleteCommentsByAdmin(dto.commentIds);
+  }
+
+  @Get('article-requests')
+  async listArticleRequests(@Query() query: ListArticleRequestsModerationDto) {
+    return this.articleRequestsService.listForModeration(query);
+  }
+
+  @Post('article-requests/:id/approve')
+  async approveArticleRequest(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+  ) {
+    return this.articleRequestsService.approveRequest(id, user.id);
+  }
+
+  @Post('article-requests/:id/reject')
+  async rejectArticleRequest(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+    @Body() dto: RejectArticleRequestDto,
+  ) {
+    return this.articleRequestsService.rejectRequest(id, user.id, dto);
   }
 }

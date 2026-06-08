@@ -3,6 +3,8 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type CommentDocument = HydratedDocument<Comment>;
 
+export type CommentStatus = 'pending' | 'approved' | 'rejected';
+
 @Schema({
   timestamps: true,
   toJSON: {
@@ -33,9 +35,27 @@ export class Comment {
 
   @Prop({ type: String })
   authorIp?: string;
+
+  @Prop({
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    index: true,
+  })
+  status!: CommentStatus;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  reviewedBy?: Types.ObjectId;
+
+  @Prop({ type: Date })
+  reviewedAt?: Date;
+
+  @Prop({ type: String, maxlength: 500 })
+  rejectReason?: string;
 }
 
 export const CommentSchema = SchemaFactory.createForClass(Comment);
 CommentSchema.index({ articleId: 1, createdAt: -1 });
 CommentSchema.index({ articleId: 1, parentId: 1, createdAt: 1 });
 CommentSchema.index({ likeCount: -1, createdAt: -1 });
+CommentSchema.index({ status: 1, createdAt: -1 });

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -8,8 +9,11 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import { CreateCommentReportDto } from '../moderation/dto/create-comment-report.dto';
 import { ModerationService } from '../moderation/moderation.service';
@@ -19,6 +23,7 @@ import { OptionalCurrentUser } from '../auth/decorators/optional-current-user.de
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../auth/guards/optional-jwt-auth.guard';
 import type { UserDocument } from '../users/schemas/user.schema';
+import { articleImageUploadOptions } from './article-image-upload.config';
 import { ArticlesService } from './articles.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { ListArticlesDto } from './dto/list-articles.dto';
@@ -78,6 +83,19 @@ export class ArticlesController {
   ) {
     const parsedLimit = Math.min(Math.max(parseInt(limit ?? '5', 10) || 5, 1), 12);
     return this.articlesService.listPopularComments(parsedLimit, user?.id);
+  }
+
+  @Post('upload-image')
+  @UseGuards(JwtAuthGuard)
+  @UseInterceptors(FileInterceptor('image', articleImageUploadOptions))
+  uploadImage(@UploadedFile() file?: Express.Multer.File) {
+    if (!file) {
+      throw new BadRequestException('Rasm fayli yuborilmadi');
+    }
+
+    return {
+      url: this.articlesService.buildUploadedImageUrl(file.filename),
+    };
   }
 
   @Get(':id/engagement')

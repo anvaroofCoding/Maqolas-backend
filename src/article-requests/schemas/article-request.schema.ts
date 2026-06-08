@@ -5,6 +5,11 @@ export type ArticleRequestDocument = HydratedDocument<ArticleRequest>;
 
 export type ArticleRequestStatus = 'new' | 'in_progress' | 'fulfilled';
 
+export type ArticleRequestModerationStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected';
+
 @Schema({
   timestamps: true,
   toJSON: {
@@ -40,6 +45,23 @@ export class ArticleRequest {
     index: true,
   })
   status!: ArticleRequestStatus;
+
+  @Prop({
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending',
+    index: true,
+  })
+  moderationStatus!: ArticleRequestModerationStatus;
+
+  @Prop({ type: String, trim: true, maxlength: 500 })
+  rejectionReason?: string;
+
+  @Prop({ type: Date })
+  reviewedAt?: Date;
+
+  @Prop({ type: Types.ObjectId, ref: 'User' })
+  reviewedById?: Types.ObjectId;
 
   @Prop({ type: Number, default: 0, min: 0 })
   likeCount!: number;

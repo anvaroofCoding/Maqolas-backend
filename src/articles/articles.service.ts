@@ -4,7 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
+import type { AppConfig } from '../config/configuration';
 import { Model, Types } from 'mongoose';
 import { extractCoverImage, extractExcerpt } from './article.utils';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -29,6 +31,8 @@ import {
 } from './schemas/comment-like.schema';
 import { Category, CategoryDocument } from '../categories/schemas/category.schema';
 import { ModerationService } from '../moderation/moderation.service';
+import { containsProfanity } from '../moderation/utils/profanity-filter';
+import { APPROVED_COMMENT_FILTER } from '../moderation/utils/approved-comment-filter';
 import { NotificationsService } from '../notifications/notifications.service';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
@@ -77,7 +81,15 @@ export class ArticlesService {
     private readonly followModel: Model<UserFollowDocument>,
     private readonly notificationsService: NotificationsService,
     private readonly moderationService: ModerationService,
+    private readonly config: ConfigService<AppConfig, true>,
   ) {}
+
+  buildUploadedImageUrl(filename: string) {
+    const baseUrl = this.config
+      .get('publicBaseUrl', { infer: true })
+      .replace(/\/$/, '');
+    return `${baseUrl}/uploads/article-images/${filename}`;
+  }
 
   private async actorDisplayName(userId: string) {
     const user = await this.userModel
@@ -575,7 +587,7 @@ export class ArticlesService {
     const limit = query.limit ?? 50;
 
     const comments = await this.commentModel
-      .find({ articleId: article._id })
+      .find({ articleId: article._id, ...APPROVED_COMMENT_FILTER })
       .sort({ createdAt: 1 })
       .populate('authorId', 'displayName username avatarUrl')
       .exec();
@@ -622,6 +634,11 @@ export class ArticlesService {
     if (!content) {
       throw new ForbiddenException('Izoh bo\'sh bo\'lmasligi kerak');
     }
+    if (containsProfanity(content)) {
+      throw new BadRequestException(
+        'Izohda taqiqlangan so\'zlar bor. Iltimos, izohni tozalab qayta yuboring.',
+      );
+    }
 
     let parentId: Types.ObjectId | undefined;
 
@@ -631,7 +648,11 @@ export class ArticlesService {
       }
 
       const parent = await this.commentModel
-        .findOne({ _id: dto.parentId, articleId: article._id })
+        .findOne({
+          _id: dto.parentId,
+          articleId: article._id,
+          ...APPROVED_COMMENT_FILTER,
+        })
         .exec();
 
       if (!parent) {
@@ -647,44 +668,18 @@ export class ArticlesService {
       content,
       parentId,
       authorIp,
+      status: 'pending',
     });
-
-    article.commentCount = (article.commentCount ?? 0) + 1;
-    await article.save();
 
     const populated = await this.commentModel
       .findById(comment._id)
       .populate('authorId', 'displayName username avatarUrl')
       .exec();
 
-    const actorName = await this.actorDisplayName(userId);
-
-    void this.notificationsService.createSafe({
-      recipientId: article.authorId.toString(),
-      actorId: userId,
-      type: 'article_commented',
-      message: `${actorName} maqolangizga izoh qoldirdi`,
-      link: `/maqola/${article.slug}`,
-      articleId: article.id,
-    });
-
-    if (parentId) {
-      const parent = await this.commentModel.findById(parentId).exec();
-      if (parent) {
-        void this.notificationsService.createSafe({
-          recipientId: parent.authorId.toString(),
-          actorId: userId,
-          type: 'comment_replied',
-          message: `${actorName} izohingizga javob berdi`,
-          link: `/maqola/${article.slug}`,
-          articleId: article.id,
-        });
-      }
-    }
-
     return {
       comment: this.toPublicComment(populated!),
-      commentCount: article.commentCount,
+      commentCount: article.commentCount ?? 0,
+      pending: true,
     };
   }
 
@@ -696,7 +691,11 @@ export class ArticlesService {
     }
 
     const comment = await this.commentModel
-      .findOne({ _id: commentId, articleId: article._id })
+      .findOne({
+        _id: commentId,
+        articleId: article._id,
+        ...APPROVED_COMMENT_FILTER,
+      })
       .exec();
 
     if (!comment) {
@@ -709,7 +708,7 @@ export class ArticlesService {
 
     const allComments = await this.commentModel
       .find({ articleId: article._id })
-      .select('_id parentId')
+      .select('_id parentId status')
       .exec();
 
     const idsToDelete = new Set<string>([comment._id.toString()]);
@@ -728,6 +727,12 @@ export class ArticlesService {
     }
 
     const deleteIds = Array.from(idsToDelete).map((id) => new Types.ObjectId(id));
+    const approvedDeleteCount = allComments.filter(
+      (item) =>
+        idsToDelete.has(item._id.toString()) &&
+        (!item.status || item.status === 'approved'),
+    ).length;
+
     await Promise.all([
       this.commentModel.deleteMany({ _id: { $in: deleteIds } }).exec(),
       this.commentLikeModel
@@ -735,15 +740,17 @@ export class ArticlesService {
         .exec(),
     ]);
 
-    article.commentCount = Math.max(
-      0,
-      (article.commentCount ?? 0) - deleteIds.length,
-    );
-    await article.save();
+    if (approvedDeleteCount > 0) {
+      article.commentCount = Math.max(
+        0,
+        (article.commentCount ?? 0) - approvedDeleteCount,
+      );
+      await article.save();
+    }
 
     return {
       deleted: true,
-      commentCount: article.commentCount,
+      commentCount: article.commentCount ?? 0,
     };
   }
 
@@ -759,7 +766,11 @@ export class ArticlesService {
     }
 
     const comment = await this.commentModel
-      .findOne({ _id: commentId, articleId: article._id })
+      .findOne({
+        _id: commentId,
+        articleId: article._id,
+        ...APPROVED_COMMENT_FILTER,
+      })
       .exec();
 
     if (!comment) {
@@ -807,7 +818,7 @@ export class ArticlesService {
     const articleIds = publishedArticles.map((article) => article._id);
 
     const comments = await this.commentModel
-      .find({ articleId: { $in: articleIds } })
+      .find({ articleId: { $in: articleIds }, ...APPROVED_COMMENT_FILTER })
       .sort({ likeCount: -1, createdAt: -1 })
       .limit(limit)
       .populate('authorId', 'displayName username avatarUrl')

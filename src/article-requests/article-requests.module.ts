@@ -24,5 +24,6 @@ import {
   ],
   controllers: [ArticleRequestsController],
   providers: [ArticleRequestsService],
+  exports: [ArticleRequestsService],
 })
 export class ArticleRequestsModule {}

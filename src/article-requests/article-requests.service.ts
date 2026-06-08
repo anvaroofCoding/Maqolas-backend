@@ -2,14 +2,18 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { UsersService } from '../users/users.service';
 import { CreateArticleRequestDto } from './dto/create-article-request.dto';
 import { ListAllArticleRequestsDto } from './dto/list-all-article-requests.dto';
+import { ListArticleRequestsModerationDto } from './dto/list-article-requests-moderation.dto';
 import { ListArticleRequestsDto } from './dto/list-article-requests.dto';
+import { RejectArticleRequestDto } from './dto/reject-article-request.dto';
 import { UpdateArticleRequestNoteDto } from './dto/update-article-request-note.dto';
 import {
   ArticleRequest,
@@ -19,9 +23,16 @@ import {
   ArticleRequestLike,
   ArticleRequestLikeDocument,
 } from './schemas/article-request-like.schema';
+import {
+  APPROVED_ARTICLE_REQUEST_FILTER,
+  isApprovedArticleRequest,
+  PENDING_ARTICLE_REQUEST_FILTER,
+} from './utils/approved-article-request-filter';
 
 @Injectable()
-export class ArticleRequestsService {
+export class ArticleRequestsService implements OnModuleInit {
+  private readonly logger = new Logger(ArticleRequestsService.name);
+
   constructor(
     @InjectModel(ArticleRequest.name)
     private readonly requestModel: Model<ArticleRequestDocument>,
@@ -30,9 +41,31 @@ export class ArticleRequestsService {
     private readonly usersService: UsersService,
   ) {}
 
+  async onModuleInit() {
+    const result = await this.requestModel
+      .updateMany(
+        { moderationStatus: { $exists: false } },
+        { $set: { moderationStatus: 'pending' } },
+      )
+      .exec();
+
+    if (result.modifiedCount > 0) {
+      this.logger.log(
+        `${result.modifiedCount} ta eski mavzu taklifi "kutilmoqda" holatiga o'tkazildi`,
+      );
+    }
+  }
+
+  private publicVisibleFilter() {
+    return {
+      status: { $ne: 'fulfilled' as const },
+      ...APPROVED_ARTICLE_REQUEST_FILTER,
+    };
+  }
+
   async listTrending(limit = 5, viewerId?: string) {
     const requests = await this.requestModel
-      .find({ status: { $ne: 'fulfilled' } })
+      .find(this.publicVisibleFilter())
       .sort({ likeCount: -1, createdAt: -1 })
       .limit(limit)
       .populate('requesterId', 'displayName username avatarUrl')
@@ -60,16 +93,14 @@ export class ArticleRequestsService {
 
     const [requests, total] = await Promise.all([
       this.requestModel
-        .find({ status: { $ne: 'fulfilled' } })
+        .find(this.publicVisibleFilter())
         .sort({ likeCount: -1, createdAt: -1 })
         .skip(skip)
         .limit(limit)
         .populate('requesterId', 'displayName username avatarUrl')
         .populate('authorId', 'displayName username avatarUrl')
         .exec(),
-      this.requestModel
-        .countDocuments({ status: { $ne: 'fulfilled' } })
-        .exec(),
+      this.requestModel.countDocuments(this.publicVisibleFilter()).exec(),
     ]);
 
     const likedIds = viewerId
@@ -101,7 +132,10 @@ export class ArticleRequestsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
-    const filter = { authorId: author._id };
+    const filter = {
+      authorId: author._id,
+      ...this.publicVisibleFilter(),
+    };
 
     const [requests, total] = await Promise.all([
       this.requestModel
@@ -159,6 +193,7 @@ export class ArticleRequestsService {
       title: dto.title.trim(),
       description: dto.description.trim(),
       status: 'new',
+      moderationStatus: 'pending',
       likeCount: 0,
     });
 
@@ -166,11 +201,17 @@ export class ArticleRequestsService {
 
     return {
       request: this.toPublicRequest(request, false),
+      pending: true,
     };
   }
 
   async toggleLike(requestId: string, userId: string) {
     const request = await this.findRequestById(requestId);
+
+    if (!isApprovedArticleRequest(request.moderationStatus)) {
+      throw new BadRequestException('Bu taklif hali tasdiqlanmagan');
+    }
+
     const existing = await this.likeModel
       .findOne({ requestId: request._id, userId })
       .exec();
@@ -186,6 +227,82 @@ export class ArticleRequestsService {
     request.likeCount = (request.likeCount ?? 0) + 1;
     await request.save();
     return { liked: true, likeCount: request.likeCount };
+  }
+
+  async listForModeration(query: ListArticleRequestsModerationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+    const status = query.status ?? 'pending';
+    const filter =
+      status === 'pending'
+        ? PENDING_ARTICLE_REQUEST_FILTER
+        : { moderationStatus: status };
+
+    const [requests, total] = await Promise.all([
+      this.requestModel
+        .find(filter)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('requesterId', 'displayName username avatarUrl')
+        .populate('authorId', 'displayName username avatarUrl')
+        .exec(),
+      this.requestModel.countDocuments(filter).exec(),
+    ]);
+
+    return {
+      requests: requests.map((request) =>
+        this.toPublicRequest(request, false, true),
+      ),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  async approveRequest(requestId: string, reviewerId: string) {
+    const request = await this.findRequestById(requestId);
+
+    if (request.moderationStatus === 'approved') {
+      return { request: this.toPublicRequest(request, false, true) };
+    }
+
+    request.moderationStatus = 'approved';
+    request.rejectionReason = undefined;
+    request.reviewedAt = new Date();
+    request.reviewedById = new Types.ObjectId(reviewerId);
+    await request.save();
+    await request.populate('requesterId', 'displayName username avatarUrl');
+    await request.populate('authorId', 'displayName username avatarUrl');
+
+    return {
+      request: this.toPublicRequest(request, false, true),
+    };
+  }
+
+  async rejectRequest(
+    requestId: string,
+    reviewerId: string,
+    dto: RejectArticleRequestDto,
+  ) {
+    const request = await this.findRequestById(requestId);
+    const reason = dto.reason?.trim();
+
+    request.moderationStatus = 'rejected';
+    request.rejectionReason = reason || undefined;
+    request.reviewedAt = new Date();
+    request.reviewedById = new Types.ObjectId(reviewerId);
+    await request.save();
+    await request.populate('requesterId', 'displayName username avatarUrl');
+    await request.populate('authorId', 'displayName username avatarUrl');
+
+    return {
+      request: this.toPublicRequest(request, false, true),
+    };
   }
 
   async updateAuthorNote(
