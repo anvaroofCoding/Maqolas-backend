@@ -75,6 +75,9 @@ export class Article {
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Category' }], default: [], index: true })
   categoryIds!: Types.ObjectId[];
+
+  createdAt!: Date;
+  updatedAt!: Date;
 }
 
 export const ArticleSchema = SchemaFactory.createForClass(Article);
