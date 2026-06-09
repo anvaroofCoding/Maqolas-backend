@@ -9,10 +9,15 @@ import { InjectModel } from '@nestjs/mongoose';
 import type { AppConfig } from '../config/configuration';
 import { Model, Types } from 'mongoose';
 import { extractCoverImage, extractExcerpt } from './article.utils';
+import {
+  buildPublishedArticleSearchFilter,
+  scoreArticleSearchMatch,
+} from './article-search.utils';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { ListArticlesDto } from './dto/list-articles.dto';
 import { ListMyArticlesDto } from './dto/list-my-articles.dto';
 import { ListCommentsDto } from './dto/list-comments.dto';
+import { SearchArticlesDto } from './dto/search-articles.dto';
 import { AdminUpdateArticleDto } from '../admin/dto/admin-update-article.dto';
 import { SaveArticleDto } from './dto/save-article.dto';
 import {
@@ -919,6 +924,53 @@ export class ArticlesService {
     }
 
     return this.findPopularFeed(params);
+  }
+
+  async searchPublished(params: SearchArticlesDto) {
+    const query = params.q.trim();
+    const limit = params.limit ?? 10;
+    const filter = buildPublishedArticleSearchFilter(query);
+
+    if (!filter) {
+      return { articles: [] };
+    }
+
+    const articles = await this.articleModel
+      .find(filter)
+      .limit(Math.min(limit * 3, 60))
+      .populate('authorId', 'displayName username avatarUrl')
+      .populate('categoryIds', 'name slug')
+      .exec();
+
+    const ranked = articles
+      .map((article) => ({
+        article,
+        score: scoreArticleSearchMatch(
+          {
+            title: article.title,
+            excerpt: article.excerpt,
+            contentHtml: article.contentHtml,
+          },
+          query,
+        ),
+      }))
+      .sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+
+        const aPublished = a.article.publishedAt?.getTime() ?? 0;
+        const bPublished = b.article.publishedAt?.getTime() ?? 0;
+        return bPublished - aPublished;
+      })
+      .slice(0, limit)
+      .map(({ article }) => {
+        const json = this.toPublicArticle(article) as Record<string, unknown>;
+        delete json.contentHtml;
+        return json;
+      });
+
+    return { articles: ranked };
   }
 
   private async buildPublishedFeedFilter(params: ListArticlesDto) {

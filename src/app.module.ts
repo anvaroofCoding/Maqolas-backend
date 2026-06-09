@@ -8,8 +8,11 @@ import { ArticlesModule } from './articles/articles.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import configuration, { type AppConfig } from './config/configuration';
+import { ImageProxyModule } from './image-proxy/image-proxy.module';
+import { AiModule } from './ai/ai.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { UsersModule } from './users/users.module';
+import { WelcomePromoModule } from './welcome-promo/welcome-promo.module';
 
 @Module({
   imports: [
@@ -31,6 +34,9 @@ import { UsersModule } from './users/users.module';
     BannersModule,
     AdminModule,
     NotificationsModule,
+    ImageProxyModule,
+    AiModule,
+    WelcomePromoModule,
   ],
 })
 export class AppModule {}

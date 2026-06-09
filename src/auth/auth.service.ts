@@ -21,6 +21,29 @@ import type {
 const REFRESH_COOKIE = 'maqolas_refresh';
 const ACCESS_COOKIE = 'maqolas_access';
 
+function parseDurationToMs(duration: string): number {
+  const match = /^(\d+)(s|m|h|d)$/.exec(duration.trim());
+  if (!match) {
+    return 7 * 24 * 60 * 60 * 1000;
+  }
+
+  const value = Number.parseInt(match[1], 10);
+  const unit = match[2];
+
+  switch (unit) {
+    case 's':
+      return value * 1000;
+    case 'm':
+      return value * 60 * 1000;
+    case 'h':
+      return value * 60 * 60 * 1000;
+    case 'd':
+      return value * 24 * 60 * 60 * 1000;
+    default:
+      return 7 * 24 * 60 * 60 * 1000;
+  }
+}
+
 @Injectable()
 export class AuthService {
   private readonly googleClient: OAuth2Client;
@@ -147,7 +170,7 @@ export class AuthService {
       response_type: 'code',
       scope: 'openid email profile',
       access_type: 'offline',
-      prompt: 'consent',
+      prompt: 'select_account',
     });
 
     return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
@@ -208,12 +231,18 @@ export class AuthService {
 
   setAuthCookies(res: Response, tokens: AuthTokens) {
     const isProd = this.config.get('nodeEnv', { infer: true }) === 'production';
+    const accessMaxAge = parseDurationToMs(
+      this.config.get('jwt.accessExpiresIn', { infer: true }),
+    );
+    const refreshMaxAge = parseDurationToMs(
+      this.config.get('jwt.refreshExpiresIn', { infer: true }),
+    );
 
     res.cookie(ACCESS_COOKIE, tokens.accessToken, {
       httpOnly: true,
       secure: isProd,
       sameSite: 'lax',
-      maxAge: 15 * 60 * 1000,
+      maxAge: accessMaxAge,
       path: '/',
     });
 
@@ -221,7 +250,7 @@ export class AuthService {
       httpOnly: true,
       secure: isProd,
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      maxAge: refreshMaxAge,
       path: '/api/auth',
     });
   }

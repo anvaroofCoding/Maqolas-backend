@@ -30,6 +30,7 @@ import { ListArticlesDto } from './dto/list-articles.dto';
 import { ListMyArticlesDto } from './dto/list-my-articles.dto';
 import { ListCommentsDto } from './dto/list-comments.dto';
 import { SaveArticleDto } from './dto/save-article.dto';
+import { SearchArticlesDto } from './dto/search-articles.dto';
 
 @Controller('articles')
 export class ArticlesController {
@@ -45,6 +46,11 @@ export class ArticlesController {
     @OptionalCurrentUser() user: UserDocument | null = null,
   ) {
     return this.articlesService.findPublishedFeed(query, user?.id);
+  }
+
+  @Get('search')
+  async search(@Query() query: SearchArticlesDto) {
+    return this.articlesService.searchPublished(query);
   }
 
   @Get('mine')

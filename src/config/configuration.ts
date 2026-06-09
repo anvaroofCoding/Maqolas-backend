@@ -16,6 +16,7 @@ export interface AppConfig {
     callbackUrl: string;
   };
   superAdminEmails: string[];
+  geminiApiKey: string;
 }
 
 export default (): AppConfig => ({
@@ -29,7 +30,7 @@ export default (): AppConfig => ({
     accessSecret: process.env.JWT_ACCESS_SECRET ?? 'change-me-access',
     refreshSecret: process.env.JWT_REFRESH_SECRET ?? 'change-me-refresh',
     accessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN ?? '15m',
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
+    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '365d',
   },
   google: {
     clientId: (process.env.GOOGLE_CLIENT_ID ?? '').trim(),
@@ -43,4 +44,5 @@ export default (): AppConfig => ({
     .split(',')
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
+  geminiApiKey: (process.env.GEMINI_API_KEY ?? '').trim(),
 });

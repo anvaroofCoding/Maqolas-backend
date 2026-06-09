@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { BannersModule } from '../banners/banners.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ModerationModule } from '../moderation/moderation.module';
+import { WelcomePromoModule } from '../welcome-promo/welcome-promo.module';
 import { AdminController } from './admin.controller';
 
 @Module({
@@ -14,6 +15,7 @@ import { AdminController } from './admin.controller';
     ArticleRequestsModule,
     CategoriesModule,
     BannersModule,
+    WelcomePromoModule,
     ModerationModule,
   ],
   controllers: [AdminController],

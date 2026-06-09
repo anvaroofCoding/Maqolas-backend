@@ -43,20 +43,22 @@ export class CategoriesService implements OnModuleInit {
     );
   }
 
+  private sortByName<T extends { name: string }>(categories: T[]): T[] {
+    return [...categories].sort((a, b) =>
+      a.name.localeCompare(b.name, 'uz', { sensitivity: 'base' }),
+    );
+  }
+
   async findAll() {
-    const categories = await this.categoryModel
-      .find()
-      .sort({ sortOrder: 1, name: 1 })
-      .exec();
-    return categories.map((category) => category.toJSON());
+    const categories = await this.categoryModel.find().exec();
+    return this.sortByName(categories.map((category) => category.toJSON()));
   }
 
   async findActive() {
     const categories = await this.categoryModel
       .find({ isActive: true })
-      .sort({ sortOrder: 1, name: 1 })
       .exec();
-    return categories.map((category) => category.toJSON());
+    return this.sortByName(categories.map((category) => category.toJSON()));
   }
 
   async create(dto: CreateCategoryDto) {

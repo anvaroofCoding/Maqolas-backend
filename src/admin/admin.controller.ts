@@ -40,6 +40,10 @@ import {
 } from '../moderation/dto/batch-comment-ids.dto';
 import { ModerationService } from '../moderation/moderation.service';
 import { RejectArticleDto } from './dto/reject-article.dto';
+import { promoUploadOptions } from '../welcome-promo/promo-upload.config';
+import { CreateWelcomePromoDto } from '../welcome-promo/dto/create-welcome-promo.dto';
+import { UpdateWelcomePromoDto } from '../welcome-promo/dto/update-welcome-promo.dto';
+import { WelcomePromoService } from '../welcome-promo/welcome-promo.service';
 
 class ReviewQueueQueryDto {
   @IsOptional()
@@ -83,6 +87,7 @@ export class AdminController {
     private readonly articleRequestsService: ArticleRequestsService,
     private readonly categoriesService: CategoriesService,
     private readonly bannersService: BannersService,
+    private readonly welcomePromoService: WelcomePromoService,
     private readonly moderationService: ModerationService,
   ) {}
 
@@ -198,6 +203,69 @@ export class AdminController {
   @Delete('banners/:id')
   async deleteBanner(@Param('id') id: string) {
     return this.bannersService.remove(id);
+  }
+
+  @Get('welcome-promo')
+  async listWelcomePromos() {
+    return this.welcomePromoService.listAll();
+  }
+
+  @Post('welcome-promo')
+  @UseInterceptors(FileInterceptor('image', promoUploadOptions))
+  async createWelcomePromo(
+    @Body() dto: CreateWelcomePromoDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.welcomePromoService.create(dto, file);
+  }
+
+  @Patch('welcome-promo/:id')
+  @UseInterceptors(FileInterceptor('image', promoUploadOptions))
+  async updateWelcomePromo(
+    @Param('id') id: string,
+    @Body() dto: UpdateWelcomePromoDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.welcomePromoService.update(id, dto, file);
+  }
+
+  @Delete('welcome-promo/:id')
+  async deleteWelcomePromo(@Param('id') id: string) {
+    return this.welcomePromoService.remove(id);
+  }
+
+  @Get('welcome-promo/comments')
+  async listWelcomePromoComments(@Query() query: CommentModerationQueryDto) {
+    return this.welcomePromoService.listCommentsForModeration(
+      query.page,
+      query.limit,
+      query.status ?? 'pending',
+    );
+  }
+
+  @Post('welcome-promo/comments/approve')
+  async approveWelcomePromoComments(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: BatchCommentIdsDto,
+  ) {
+    return this.welcomePromoService.approveComments(dto.commentIds, user.id);
+  }
+
+  @Post('welcome-promo/comments/reject')
+  async rejectWelcomePromoComments(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: RejectCommentsDto,
+  ) {
+    return this.welcomePromoService.rejectComments(
+      dto.commentIds,
+      user.id,
+      dto.reason,
+    );
+  }
+
+  @Post('welcome-promo/comments/delete')
+  async deleteWelcomePromoComments(@Body() dto: BatchCommentIdsDto) {
+    return this.welcomePromoService.deleteCommentsByAdmin(dto.commentIds);
   }
 
   @Get('reports')
