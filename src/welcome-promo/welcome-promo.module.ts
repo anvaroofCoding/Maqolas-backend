@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ModerationModule } from '../moderation/moderation.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import {
   WelcomePromo,
   WelcomePromoSchema,
@@ -27,6 +28,7 @@ import { WelcomePromoService } from './welcome-promo.service';
       },
     ]),
     ModerationModule,
+    NotificationsModule,
   ],
   controllers: [WelcomePromoController],
   providers: [WelcomePromoService],

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
 import {
   Notification,
@@ -17,11 +18,15 @@ type CreateNotificationInput = {
   articleId?: string;
 };
 
+type NotifyAdminsInput = Omit<CreateNotificationInput, 'recipientId'>;
+
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectModel(Notification.name)
     private readonly notificationModel: Model<NotificationDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
   ) {}
 
   async create(input: CreateNotificationInput) {
@@ -53,6 +58,36 @@ export class NotificationsService {
       return await this.create(input);
     } catch {
       return null;
+    }
+  }
+
+  async notifyAdmins(input: NotifyAdminsInput) {
+    try {
+      const admins = await this.userModel
+        .find({ role: 'super_admin' })
+        .select('_id')
+        .lean()
+        .exec();
+
+      if (admins.length === 0) {
+        return;
+      }
+
+      await Promise.all(
+        admins.map((admin) => {
+          const recipientId = String(admin._id);
+          if (input.actorId && input.actorId === recipientId) {
+            return Promise.resolve(null);
+          }
+
+          return this.createSafe({
+            ...input,
+            recipientId,
+          });
+        }),
+      );
+    } catch {
+      // Admin bildirishnomalari ixtiyoriy — asosiy jarayonni to'xtatmaydi
     }
   }
 

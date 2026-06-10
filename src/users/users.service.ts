@@ -5,6 +5,7 @@ import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
 import { Model } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { User, UserDocument } from './schemas/user.schema';
 import { ensureAvatarDir } from './avatar-upload.config';
@@ -28,6 +29,7 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async findById(id: string) {
@@ -129,7 +131,7 @@ export class UsersService {
 
     const username = await this.resolveUniqueUsername(profile.email);
 
-    return this.userModel.create({
+    const user = await this.userModel.create({
       googleId: profile.googleId,
       email: profile.email,
       username,
@@ -143,6 +145,15 @@ export class UsersService {
       lastLoginAt: new Date(),
       role: this.isSuperAdminEmail(profile.email) ? 'super_admin' : 'user',
     });
+
+    void this.notificationsService.notifyAdmins({
+      actorId: user.id,
+      type: 'admin_new_user',
+      message: `Yangi foydalanuvchi ro'yxatdan o'tdi: ${user.displayName}`,
+      link: '/admin?tab=users',
+    });
+
+    return user;
   }
 
   async updateProfile(userId: string, dto: UpdateProfileDto) {

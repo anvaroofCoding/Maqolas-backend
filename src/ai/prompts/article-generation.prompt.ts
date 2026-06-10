@@ -1,85 +1,219 @@
-/**
- * Maqola editori (TipTap) qo'llab-quvvatlaydigan HTML formatlari.
- * AI javobida shu teglardan kerakli joylarda foydalanishi kerak.
- */
-export function buildArticleGenerationPrompt(userPrompt: string): string {
+import { countWords } from '../validators/max-words.validator';
+
+export const MAX_ARTICLE_WORDS = 5000;
+export const DEFAULT_ARTICLE_WORDS = 1500;
+export const MULTI_PASS_WORD_THRESHOLD = 1800;
+
+const HTML_FORMAT_RULES = [
+  '=== HTML FORMATLASH (faqat kerakli joylarda) ===',
+  '- Sarlavhalar: <h1>, <h2>, <h3>',
+  '- Paragraf: <p>matn</p>',
+  '- Qalin: <strong>matn</strong>, kursiv: <em>matn</em>',
+  '- Belgili ro\'yxat: <ul><li>element</li></ul>',
+  '- Raqamli ro\'yxat: <ol><li>element</li></ol>',
+  '- Iqtibos: <blockquote><p>matn</p></blockquote>',
+  '- Jadval: <table><thead><tr><th>...</th></tr></thead><tbody><tr><td>...</td></tr></tbody></table>',
+  '- Callout (maslahat): <div data-callout="true" data-variant="tip" class="article-callout article-callout--tip"><div class="article-callout__label" contenteditable="false">Maslahat</div><div class="article-callout__body"><p>matn</p></div></div>',
+  '- Rasm: <img src="https://picsum.photos/seed/MAVZU/800/450" alt="tavsif">',
+  '- Markdown sintaksisi ishlatma (**, ##, ``` va hokazo)',
+].join('\n');
+
+const CORE_WRITING_RULES = [
+  '=== ASOSIY YOZISH QOIDALARI ===',
+  '- TO\'G\'RIDAN-TO\'G\'RI tayyor maqola matnini yoz — nashr qilishga tayyor bo\'lsin',
+  '- Mavzu, muhit, kontekst yoki so\'rov haqida UMUMIY SHARH YOZMA',
+  '- "Ushbu maqolada...", "Bu mavzuda biz...", "Keling, ko\'rib chiqamiz", "So\'rovingizga ko\'ra", "qisqa sharh va amaliy yo\'riqnoma" kabi META gaplardan QAT\'IY QOCH',
+  '- Foydalanuvchi bergan mavzu va talablarga MOS, chuqur va professional maqola yoz',
+  '- Prompt bir nechta paragraf yoki banddan iborat bo\'lsa — HAR BIRINI qamrab ol',
+  '- Raqamli talablar (1., 2., 3. ...) bo\'lsa — har bir band bajarilgan bo\'lsin',
+  '- Uslub, janr, hissiyot, faktlar, struktura haqidagi ko\'rsatmalarga QAT\'IY amal qil',
+  '- O\'zbek tilida, jurnalistik va ekspert darajadagi uslubda yoz',
+  '- Faktlar mantiqli, misollar aniq, fikrlar izchil bo\'lsin',
+  '- Umumiy shablon matn, bo\'sh gap va takrorlanish YOZMA',
+].join('\n');
+
+export function parseTargetWordCount(userPrompt: string): number {
+  const patterns = [
+    /kamida\s+(\d{3,4})\s*(?:ta\s+)?(?:dan\s+)?(?:ortiq\s+)?so[''`ʼ]/i,
+    /(\d{3,4})\s*(?:ta\s+)?(?:dan\s+)?ortiq\s+so[''`ʼ]/i,
+    /(\d{3,4})\s*(?:ta\s+)?so[''`ʼ]z/i,
+    /taxminan\s+(\d{3,4})\s*(?:ta\s+)?so[''`ʼ]?z?/i,
+    /hajm[:\s]+(\d{3,4})/i,
+    /uzunligi[:\s]+(\d{3,4})/i,
+    /(\d{3,4})\s*so[''`ʼ]zlik/i,
+    /matn\s+hajmi[:\s]*(\d{3,4})/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = userPrompt.match(pattern);
+    if (match) {
+      const parsed = parseInt(match[1], 10);
+      if (!Number.isNaN(parsed)) {
+        return Math.min(MAX_ARTICLE_WORDS, Math.max(500, parsed));
+      }
+    }
+  }
+
+  const promptWords = countWords(userPrompt);
+  if (promptWords >= 150) {
+    return Math.min(MAX_ARTICLE_WORDS, 2500);
+  }
+  if (promptWords >= 80) {
+    return 2000;
+  }
+  if (promptWords >= 40) {
+    return 1800;
+  }
+
+  return DEFAULT_ARTICLE_WORDS;
+}
+
+export function buildArticleSystemInstruction(targetWords: number): string {
+  const minWords = Math.max(400, Math.round(targetWords * 0.88));
+
   return [
-    'Sen professional o\'zbek tilida maqola yozuvchi yordamchisan.',
-    'Foydalanuvchi talabiga asoslanib to\'liq, sifatli va o\'qilishi oson maqola yoz.',
+    'Sen professional o\'zbek tilida maqola yozuvchi ekspertsan.',
+    'Vazifang — foydalanuvchi bergan talab bo\'yicha TO\'LIQ va TAYYOR maqola yozish.',
     '',
+    CORE_WRITING_RULES,
+    '',
+    '=== HAJM ===',
+    `- Maqola hajmi taxminan ${targetWords} ta so'z bo'lsin`,
+    `- Kamida ${minWords} ta so'z yoz (qisqa umumiy matn YOZMA)`,
+    `- Maksimal hajm: ${MAX_ARTICLE_WORDS} ta so'z`,
+    '',
+    HTML_FORMAT_RULES,
+    '',
+    '=== TUZILMA ===',
+    '- Birinchi element <h1> bo\'lsin (sarlavha bilan bir xil yoki yaqin)',
+    '- Foydalanuvchi bergan bo\'lim nomlari va tuzilmani saqla',
+    '- Kirish, asosiy bo\'limlar (h2/h3) va xulosa bo\'lsin',
+    '',
+    '=== JAVOB FORMATI ===',
     'Javobni FAQAT quyidagi JSON formatida qaytar, boshqa hech narsa yozma:',
     '{"title":"Maqola sarlavhasi","contentHtml":"<h1>...</h1><p>...</p>..."}',
+    '- contentHtml ichidagi qo\'shtirnoqlarni JSON uchun to\'g\'ri escape qil',
+  ].join('\n');
+}
+
+export function buildArticleUserMessage(userPrompt: string): string {
+  return [
+    'Quyidagi foydalanuvchi talabiga QAT\'IY amal qilib, shu mavzu bo\'yicha to\'liq maqola yoz.',
+    'Talabdagi har bir band, uslub, hissiyot, faktlar va struktura ko\'rsatmalarini bajar.',
     '',
-    '=== UMUMIY QOIDALAR ===',
-    '- title: qisqa va jozibali sarlavha',
-    '- contentHtml: to\'liq maqola HTML formatida (faqat HTML, markdown emas)',
-    '- Birinchi element <h1> bo\'lsin (title bilan bir xil yoki yaqin)',
-    '- Kamida 4–6 ta bo\'lim bo\'lsin',
-    '- O\'zbek tilida, tabiiy va professional uslubda yoz',
-    '- Quyidagi formatlash vositalaridan maqola mazmuniga MOS kelganda foydalan',
-    '- Har bir elementni majburiy qilma — kerakli joyda, o\'lchovli ishlat',
-    '- Turli formatlarni aralashtirib, boy va professional ko\'rinish hosil qil',
+    '=== FOYDALANUVCHI TALABI ===',
+    userPrompt,
+  ].join('\n');
+}
+
+export function countWordsInHtml(html: string): number {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return countWords(text);
+}
+
+export type ArticleOutlineSection = {
+  heading: string;
+  level: 2 | 3;
+  summary: string;
+  targetWords: number;
+};
+
+export type ArticleOutline = {
+  title: string;
+  sections: ArticleOutlineSection[];
+};
+
+export function buildArticleGenerationPrompt(
+  userPrompt: string,
+  targetWords: number,
+): string {
+  return [
+    buildArticleSystemInstruction(targetWords),
     '',
-    '=== MATN FORMATLASH (inline) ===',
-    '- Qalin: <strong>matn</strong>',
-    '- Kursiv: <em>matn</em>',
-    '- Tag chiziq: <u>matn</u>',
-    '- Chizilgan: <s>matn</s>',
-    '- Inline kod: <code>matn</code>',
-    '- Yuqori indeks: <sup>matn</sup> (masalan: x<sup>2</sup>)',
-    '- Pastki indeks: <sub>matn</sub> (masalan: H<sub>2</sub>O)',
-    '- Matn rangi: <span style="color: #2563eb">matn</span>',
-    '- Ajratish (highlight): <mark data-color="#fef08a" style="background-color: #fef08a">matn</mark>',
-    '- Havola: <a href="https://example.com">matn</a>',
+    buildArticleUserMessage(userPrompt),
+  ].join('\n');
+}
+
+export function buildOutlinePrompt(
+  userPrompt: string,
+  targetWords: number,
+): string {
+  const sectionCount = Math.min(
+    12,
+    Math.max(6, Math.ceil(targetWords / 450)),
+  );
+
+  return [
+    'Sen professional o\'zbek tilida maqola rejalashtiruvchisan.',
+    'Foydalanuvchi talabiga asoslanib maqola tuzilmasini rejalashtir.',
+    'Faqat reja yoz — maqola matnini yozma.',
     '',
-    '=== BLOKLAR VA TUZILMA ===',
-    '- Sarlavhalar: <h1>, <h2>, <h3>',
-    '- Paragraf: <p>matn</p>',
-    '- Matn hizalanishi: <p style="text-align: center">markaz</p> yoki left/right',
-    '- Belgili ro\'yxat: <ul><li>element</li></ul>',
-    '- Raqamli ro\'yxat: <ol><li>element</li></ol>',
-    '- Vazifa ro\'yxati:',
-    '  <ul data-type="taskList"><li data-type="taskItem" data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Vazifa</p></div></li></ul>',
-    '- Iqtibos: <blockquote><p>iqtibos matni</p></blockquote>',
-    '- Kod bloki: <pre><code>kod bu yerda</code></pre> (texnik mavzularda)',
-    '- Gorizontal chiziq: <hr>',
+    CORE_WRITING_RULES,
     '',
-    '=== JADVAL ===',
-    '- Ma\'lumot solishtirish yoki tuzilmalash kerak bo\'lsa jadval qo\'sh:',
-    '  <table><thead><tr><th>Ustun 1</th><th>Ustun 2</th></tr></thead><tbody><tr><td>qiymat</td><td>qiymat</td></tr></tbody></table>',
+    `Maqola umumiy hajmi taxminan ${targetWords} ta so'z bo'ladi.`,
+    `Rejada ${sectionCount} ta bo'lim bo'lsin (kirish va xulosa ham kiradi).`,
+    'Har bir bo\'lim uchun aniq mavzu va qamrab olinadigan fikrlarni yoz.',
+    'Foydalanuvchi promptidagi barcha paragraf va bandlarni bo\'limlarga taqsimla.',
     '',
-    '=== CALLOUT BLOKLARI (maslahat, ogohlantirish, muhim) ===',
-    '- Maslahat:',
-    '  <div data-callout="true" data-variant="tip" class="article-callout article-callout--tip"><div class="article-callout__label" contenteditable="false">Maslahat</div><div class="article-callout__body"><p>matn</p></div></div>',
-    '- Ogohlantirish:',
-    '  <div data-callout="true" data-variant="warning" class="article-callout article-callout--warning"><div class="article-callout__label" contenteditable="false">Ogohlantirish</div><div class="article-callout__body"><p>matn</p></div></div>',
-    '- Muhim:',
-    '  <div data-callout="true" data-variant="important" class="article-callout article-callout--important"><div class="article-callout__label" contenteditable="false">Muhim</div><div class="article-callout__body"><p>matn</p></div></div>',
-  '',
-    '=== RASM ===',
-    '- Mavzuga mos rasm kerak bo\'lsa (masalan, 1–2 ta):',
-    '  <img src="https://picsum.photos/seed/MAVZU-NOMI/800/450" alt="tavsif">',
-    '- seed qiymatini mavzuga mos inglizcha so\'z bilan yoz',
+    'Javobni FAQAT JSON formatida qaytar:',
+    '{"title":"Sarlavha","sections":[{"heading":"Bo\'lim nomi","level":2,"summary":"Nima yoziladi","targetWords":500}]}',
     '',
-    '=== YOUTUBE VIDEO ===',
-    '- Foydalanuvchi video so\'rasa yoki mavzu video talqini talab qilsa:',
-    '  <div data-youtube-video=""><iframe src="https://www.youtube.com/embed/VIDEO_ID" width="640" height="360" class="article-youtube-embed"></iframe></div>',
-    '- Faqat haqiqiy va mavzuga mos VIDEO_ID ishlat',
+    `Bo'limlardagi targetWords yig'indisi taxminan ${targetWords} ga teng bo'lsin.`,
     '',
-    '=== MUNDARIJA ===',
-    '- Uzun maqolalarda (6+ bo\'lim) kirishdan keyin mundarija qo\'sh:',
-    '  <h2>Mundarija</h2><ul><li><a href="#bo-lim-slug">Bo\'lim nomi</a></li></ul>',
-    '- Havola sluglari sarlavha matnidan olinadi: kichik harf, bo\'shliq → tire (masalan: "Asosiy qism" → #asosiy-qism)',
+    '=== FOYDALANUVCHI TALABI ===',
+    userPrompt,
+  ].join('\n');
+}
+
+export function buildSectionPrompt(
+  userPrompt: string,
+  articleTitle: string,
+  sections: ArticleOutlineSection[],
+  batchStart: number,
+): string {
+  const batch = sections.slice(batchStart, batchStart + 1);
+  const batchWords = batch.reduce((sum, section) => sum + section.targetWords, 0);
+  const sectionPlan = batch
+    .map(
+      (section, index) =>
+        `${index + 1}. <h${section.level}>${section.heading}</h${section.level}> — ${section.summary} (≈${section.targetWords} so'z)`,
+    )
+    .join('\n');
+
+  const isFirstBatch = batchStart === 0;
+
+  return [
+    'Sen professional o\'zbek tilida badiiy-publitsistik maqola yozuvchi ekspertsan.',
+    'Berilgan reja bo\'yicha faqat BITTA bo\'limni yoz.',
     '',
-    '=== FORMATLASH STRATEGIYASI ===',
-    '- Kirish: qisqa, diqqatni jalb qiluvchi paragraf',
-    '- Asosiy qismlar: h2/h3, ro\'yxatlar, jadvallar, calloutlar aralash',
-    '- Muhim fikrlarni <strong> yoki highlight bilan ajrat',
-    '- Amaliy ko\'rsatmalar uchun vazifa ro\'yxati yoki raqamli ro\'yxat ishlat',
-    '- Texnik mavzularda kod bloki qo\'sh',
-    '- Xulosa: qisqa va aniq',
-    '- Hech qanday markdown sintaksisi ishlatma (**, ##, ``` va hokazo)',
+    CORE_WRITING_RULES,
     '',
-    `Foydalanuvchi talabi:\n${userPrompt}`,
+    `Maqola sarlavhasi: ${articleTitle}`,
+    `Ushbu bo\'limda taxminan ${batchWords} ta so\'z yoz.`,
+    '',
+    '=== YOZILADIGAN BO\'LIM ===',
+    sectionPlan,
+    '',
+    HTML_FORMAT_RULES,
+    '',
+    isFirstBatch
+      ? '- <h1> qo\'yma — faqat berilgan bo\'limni yoz'
+      : '- Oldingi bo\'limlarni takrorlama',
+    '- Umumiy shablon gaplar YOZMA',
+    '- Foydalanuvchi talabidagi hissiyot, faktlar, shaxslar va uslubga amal qil',
+    '- Har bir paragraf mazmunli, boy va o\'qilishi oson bo\'lsin',
+    '',
+    'Javobni FAQAT JSON formatida qaytar:',
+    '{"contentHtml":"<h2>...</h2><p>...</p>..."}',
+    '',
+    '=== FOYDALANUVCHI TALABI (QAT\'IY BAJARILSIN) ===',
+    userPrompt,
   ].join('\n');
 }

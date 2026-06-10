@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { CreateArticleRequestDto } from './dto/create-article-request.dto';
 import { ListAllArticleRequestsDto } from './dto/list-all-article-requests.dto';
@@ -39,6 +40,7 @@ export class ArticleRequestsService implements OnModuleInit {
     @InjectModel(ArticleRequestLike.name)
     private readonly likeModel: Model<ArticleRequestLikeDocument>,
     private readonly usersService: UsersService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async onModuleInit() {
@@ -198,6 +200,13 @@ export class ArticleRequestsService implements OnModuleInit {
     });
 
     await request.populate('requesterId', 'displayName username avatarUrl');
+
+    void this.notificationsService.notifyAdmins({
+      actorId: requesterId,
+      type: 'admin_topic_suggestion',
+      message: `Yangi mavzu taklifi: «${request.title}»`,
+      link: '/admin?tab=topic-suggestions',
+    });
 
     return {
       request: this.toPublicRequest(request, false),

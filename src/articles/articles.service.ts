@@ -338,6 +338,15 @@ export class ArticlesService {
     article.reviewedBy = undefined;
 
     await article.save();
+
+    void this.notificationsService.notifyAdmins({
+      actorId: authorId,
+      type: 'admin_article_review',
+      message: `Yangi maqola ko'rib chiqishga yuborildi: «${article.title}»`,
+      link: '/admin?tab=review',
+      articleId: article.id,
+    });
+
     return article;
   }
 

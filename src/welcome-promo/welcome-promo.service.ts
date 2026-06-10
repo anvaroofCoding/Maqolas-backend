@@ -11,6 +11,7 @@ import { join } from 'path';
 import { Model, Types } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
 import { ModerationService } from '../moderation/moderation.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   APPROVED_COMMENT_FILTER,
   PENDING_COMMENT_FILTER,
@@ -44,6 +45,7 @@ export class WelcomePromoService {
     @InjectModel(WelcomePromoCommentLike.name)
     private readonly commentLikeModel: Model<WelcomePromoCommentLikeDocument>,
     private readonly moderationService: ModerationService,
+    private readonly notificationsService: NotificationsService,
     private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
@@ -268,6 +270,13 @@ export class WelcomePromoService {
       .findById(comment._id)
       .populate('authorId', 'displayName username avatarUrl')
       .exec();
+
+    void this.notificationsService.notifyAdmins({
+      actorId: userId,
+      type: 'admin_welcome_promo_comment',
+      message: 'Kirish reklamasi izohi moderatsiyaga yuborildi',
+      link: '/admin?tab=welcome-promo',
+    });
 
     return {
       comment: this.toPublicComment(populated!),

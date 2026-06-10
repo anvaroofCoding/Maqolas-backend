@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { ArticleRequestsController } from './article-requests.controller';
 import { ArticleRequestsService } from './article-requests.service';
@@ -21,6 +22,7 @@ import {
     ]),
     AuthModule,
     UsersModule,
+    NotificationsModule,
   ],
   controllers: [ArticleRequestsController],
   providers: [ArticleRequestsService],

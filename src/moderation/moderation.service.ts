@@ -208,6 +208,13 @@ export class ModerationService implements OnModuleInit {
       status: 'pending',
     });
 
+    void this.notificationsService.notifyAdmins({
+      actorId: reporterId,
+      type: 'admin_comment_report',
+      message: 'Yangi izoh shikoyati qabul qilindi',
+      link: '/admin?tab=reports',
+    });
+
     return { report: this.toPublicReport(await this.populateReport(report.id)) };
   }
 

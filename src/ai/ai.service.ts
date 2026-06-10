@@ -18,15 +18,11 @@ export class AiService {
     return { suggestion: this.localFallback(text) };
   }
 
-  private isValidGeminiApiKey(apiKey: string): boolean {
-    return apiKey.startsWith('AIza');
-  }
-
   private async completeWithGemini(
     apiKey: string,
     text: string,
   ): Promise<string | null> {
-    if (!this.isValidGeminiApiKey(apiKey)) {
+    if (!apiKey?.trim()) {
       return null;
     }
 

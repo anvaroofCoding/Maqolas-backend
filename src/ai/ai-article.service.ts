@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -9,10 +10,29 @@ import { Model } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
 import { ArticlesService } from '../articles/articles.service';
 import {
+  GEMINI_GENERATION_MODELS,
+  hasGeminiApiKey,
+  isTemplateGarbage,
+  parseArticleGenerationPayload,
+  parseGeminiApiError,
+  parseSectionGenerationPayload,
+} from './gemini.util';
+import {
   AiArticleJob,
   AiArticleJobDocument,
 } from './schemas/ai-article-job.schema';
-import { buildArticleGenerationPrompt } from './prompts/article-generation.prompt';
+import {
+  type ArticleOutline,
+  type ArticleOutlineSection,
+  buildArticleSystemInstruction,
+  buildArticleUserMessage,
+  buildOutlinePrompt,
+  buildSectionPrompt,
+  countWordsInHtml,
+  MULTI_PASS_WORD_THRESHOLD,
+  parseTargetWordCount,
+} from './prompts/article-generation.prompt';
+import { countWords } from './validators/max-words.validator';
 
 const DAILY_LIMIT = 2;
 
@@ -22,11 +42,14 @@ const THINKING_PHASES = [
   'Maqola tuzilmasini rejalashtirmoqda...',
   'Kirish qismini yozmoqda...',
   'Asosiy qismlarni shakllantirmoqda...',
+  'Chuqur tahlil va misollarni qo\'shmoqda...',
   'Xulosa va yakuniy tahrir...',
 ];
 
 @Injectable()
 export class AiArticleService {
+  private readonly logger = new Logger(AiArticleService.name);
+
   constructor(
     @InjectModel(AiArticleJob.name)
     private readonly jobModel: Model<AiArticleJobDocument>,
@@ -178,7 +201,7 @@ export class AiArticleService {
       await this.jobModel.findByIdAndUpdate(jobId, { status: 'processing' });
 
       for (let i = 0; i < THINKING_PHASES.length - 1; i++) {
-        await this.delay(1200 + Math.random() * 800);
+        await this.delay(900 + Math.random() * 600);
         const fresh = await this.jobModel.findById(jobId).exec();
         if (!fresh || fresh.status === 'failed') return;
         await this.appendStep(jobId, THINKING_PHASES[i]);
@@ -231,45 +254,260 @@ export class AiArticleService {
   }> {
     const apiKey = this.config.get('geminiApiKey', { infer: true });
 
-    if (apiKey?.startsWith('AIza')) {
-      const result = await this.generateWithGemini(apiKey, prompt);
-      if (result) return result;
+    if (!hasGeminiApiKey(apiKey)) {
+      throw new Error(
+        'GEMINI_API_KEY sozlanmagan. Admin .env faylida Google AI Studio kalitini qo\'ying.',
+      );
     }
 
-    return this.localFallbackArticle(prompt);
+    const targetWords = parseTargetWordCount(prompt);
+    const result = await this.generateWithGemini(apiKey, prompt, targetWords);
+
+    if (!result) {
+      throw new Error(
+        'AI sizning talabingiz bo\'yicha maqola yoza olmadi. Backend serverni qayta ishga tushiring va qayta urinib ko\'ring.',
+      );
+    }
+
+    if (isTemplateGarbage(result.contentHtml)) {
+      throw new Error(
+        'AI noto\'g\'ri (shablon) javob qaytardi. Qayta urinib ko\'ring.',
+      );
+    }
+
+    return result;
+  }
+
+  private estimateOutputTokens(targetWords: number): number {
+    return Math.min(65536, Math.max(4096, Math.ceil(targetWords * 2.8)));
+  }
+
+  private shouldUseMultiPass(prompt: string, targetWords: number): boolean {
+    return (
+      targetWords >= MULTI_PASS_WORD_THRESHOLD || countWords(prompt) >= 70
+    );
   }
 
   private async generateWithGemini(
     apiKey: string,
     prompt: string,
+    targetWords: number,
   ): Promise<{ title: string; contentHtml: string } | null> {
-    const models = [
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-    ];
+    if (this.shouldUseMultiPass(prompt, targetWords)) {
+      const multiPass = await this.generateMultiPassArticle(
+        apiKey,
+        prompt,
+        targetWords,
+      );
+      if (multiPass) return multiPass;
+    }
 
-    const systemPrompt = buildArticleGenerationPrompt(prompt);
+    const singlePass = await this.generateSinglePassArticle(
+      apiKey,
+      prompt,
+      targetWords,
+    );
+    if (!singlePass) return null;
 
-    for (const model of models) {
+    const words = countWordsInHtml(singlePass.contentHtml);
+    const minAcceptable = Math.round(targetWords * 0.5);
+
+    if (words < minAcceptable) {
+      const multiPass = await this.generateMultiPassArticle(
+        apiKey,
+        prompt,
+        targetWords,
+      );
+      if (multiPass) return multiPass;
+    }
+
+    return singlePass;
+  }
+
+  private async generateSinglePassArticle(
+    apiKey: string,
+    prompt: string,
+    targetWords: number,
+  ): Promise<{ title: string; contentHtml: string } | null> {
+    const raw = await this.callGemini(apiKey, {
+      systemInstruction: buildArticleSystemInstruction(targetWords),
+      userMessage: buildArticleUserMessage(prompt),
+      maxOutputTokens: this.estimateOutputTokens(targetWords),
+      json: true,
+      temperature: 0.75,
+    });
+
+    if (!raw) return null;
+    return parseArticleGenerationPayload(raw);
+  }
+
+  private async generateMultiPassArticle(
+    apiKey: string,
+    prompt: string,
+    targetWords: number,
+  ): Promise<{ title: string; contentHtml: string } | null> {
+    const outline = await this.generateOutline(apiKey, prompt, targetWords);
+    if (!outline || outline.sections.length === 0) return null;
+
+    const sectionHtmlParts: string[] = [];
+
+    for (let i = 0; i < outline.sections.length; i += 1) {
+      const batchPrompt = buildSectionPrompt(
+        prompt,
+        outline.title,
+        outline.sections,
+        i,
+      );
+      const batchWords = outline.sections[i]?.targetWords ?? 450;
+
+      const raw = await this.callGemini(apiKey, {
+        systemInstruction: buildArticleSystemInstruction(batchWords),
+        userMessage: batchPrompt,
+        maxOutputTokens: this.estimateOutputTokens(batchWords),
+        json: true,
+        temperature: 0.72,
+      });
+
+      if (!raw) continue;
+
+      const sectionHtml = parseSectionGenerationPayload(raw);
+      if (sectionHtml) {
+        sectionHtmlParts.push(sectionHtml);
+      }
+    }
+
+    if (sectionHtmlParts.length === 0) return null;
+
+    const contentHtml = [
+      `<h1>${this.escapeHtml(outline.title)}</h1>`,
+      ...sectionHtmlParts,
+    ].join('');
+
+    const words = countWordsInHtml(contentHtml);
+    if (words < Math.round(targetWords * 0.4)) {
+      return null;
+    }
+
+    return {
+      title: outline.title,
+      contentHtml,
+    };
+  }
+
+  private async generateOutline(
+    apiKey: string,
+    prompt: string,
+    targetWords: number,
+  ): Promise<ArticleOutline | null> {
+    const outlinePrompt = buildOutlinePrompt(prompt, targetWords);
+    const raw = await this.callGemini(apiKey, {
+      systemInstruction:
+        'Sen professional o\'zbek tilida maqola rejalashtiruvchisan. Foydalanuvchi talabidagi BARCHA bandlarni rejaga qo\'sh.',
+      userMessage: outlinePrompt,
+      maxOutputTokens: 4096,
+      json: true,
+      temperature: 0.55,
+    });
+
+    if (!raw) return null;
+
+    try {
+      const cleaned = raw
+        .replace(/^```json\s*/i, '')
+        .replace(/^```\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+      const data = JSON.parse(cleaned) as {
+        title?: string;
+        sections?: Array<{
+          heading?: string;
+          level?: number;
+          summary?: string;
+          targetWords?: number;
+        }>;
+      };
+
+      const title = data.title?.trim();
+      const sections = (data.sections ?? [])
+        .map((section) => this.normalizeOutlineSection(section))
+        .filter((section): section is ArticleOutlineSection => Boolean(section));
+
+      if (!title || sections.length === 0) return null;
+
+      return { title, sections };
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizeOutlineSection(
+    section: {
+      heading?: string;
+      level?: number;
+      summary?: string;
+      targetWords?: number;
+    },
+  ): ArticleOutlineSection | null {
+    const heading = section.heading?.trim();
+    const summary = section.summary?.trim();
+    if (!heading || !summary) return null;
+
+    const level: 2 | 3 = section.level === 3 ? 3 : 2;
+    const targetWords = Math.max(
+      200,
+      Math.min(1200, section.targetWords ?? 450),
+    );
+
+    return { heading, level, summary, targetWords };
+  }
+
+  private async callGemini(
+    apiKey: string,
+    options: {
+      systemInstruction: string;
+      userMessage: string;
+      maxOutputTokens: number;
+      json?: boolean;
+      temperature?: number;
+    },
+  ): Promise<string | null> {
+    const errors: string[] = [];
+
+    for (const model of GEMINI_GENERATION_MODELS) {
       try {
+        const maxOutputTokens = Math.min(
+          options.maxOutputTokens,
+          model.maxOutputTokens,
+        );
+
         const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${model.name}:generateContent?key=${encodeURIComponent(apiKey)}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              contents: [{ parts: [{ text: systemPrompt }] }],
+              systemInstruction: {
+                parts: [{ text: options.systemInstruction }],
+              },
+              contents: [{ role: 'user', parts: [{ text: options.userMessage }] }],
               generationConfig: {
-                temperature: 0.75,
-                maxOutputTokens: 8192,
-                responseMimeType: 'application/json',
+                temperature: options.temperature ?? 0.7,
+                maxOutputTokens,
+                ...(options.json
+                  ? { responseMimeType: 'application/json' }
+                  : {}),
               },
             }),
           },
         );
 
-        if (!response.ok) continue;
+        if (!response.ok) {
+          const errorBody = await response.text();
+          errors.push(
+            `${model.name}: ${parseGeminiApiError(response.status, errorBody)}`,
+          );
+          continue;
+        }
 
         const payload = (await response.json()) as {
           candidates?: Array<{
@@ -279,73 +517,23 @@ export class AiArticleService {
 
         const raw =
           payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-        const parsed = this.parseGeneratedJson(raw);
-        if (parsed) return parsed;
-      } catch {
-        continue;
+
+        if (raw) return raw;
+
+        errors.push(`${model.name}: bo'sh javob`);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'noma\'lum xatolik';
+        errors.push(`${model.name}: ${message}`);
       }
     }
 
-    return null;
-  }
-
-  private parseGeneratedJson(
-    raw: string,
-  ): { title: string; contentHtml: string } | null {
-    try {
-      const cleaned = raw
-        .replace(/^```json\s*/i, '')
-        .replace(/^```\s*/i, '')
-        .replace(/\s*```$/i, '')
-        .trim();
-
-      const data = JSON.parse(cleaned) as {
-        title?: string;
-        contentHtml?: string;
-      };
-
-      const title = data.title?.trim();
-      const contentHtml = data.contentHtml?.trim();
-
-      if (!title || !contentHtml) return null;
-      if (contentHtml.length < 100) return null;
-
-      return { title, contentHtml };
-    } catch {
-      return null;
+    if (errors.length > 0) {
+      this.logger.warn(`Gemini chaqiruvlari muvaffaqiyatsiz: ${errors.join(' | ')}`);
+      throw new Error(errors[errors.length - 1] ?? 'AI xizmati javob bermadi.');
     }
-  }
 
-  private localFallbackArticle(prompt: string): {
-    title: string;
-    contentHtml: string;
-  } {
-    const topic = prompt.slice(0, 80).trim() || 'Mavzuli maqola';
-    const title = topic.charAt(0).toUpperCase() + topic.slice(1);
-
-    const contentHtml = [
-      `<h1>${this.escapeHtml(title)}</h1>`,
-      `<p><strong>${this.escapeHtml(prompt.slice(0, 200))}</strong> — ushbu mavzu bo'yicha qisqa sharh va amaliy yo'riqnoma.</p>`,
-      '<h2>Kirish</h2>',
-      '<p>Bu mavzu zamonaviy jamiyatda katta ahamiyatga ega. Ushbu maqolada asosiy tushunchalar, amaliy maslahatlar va foydali xulosalar keltiriladi.</p>',
-      '<div data-callout="true" data-variant="tip" class="article-callout article-callout--tip"><div class="article-callout__label" contenteditable="false">Maslahat</div><div class="article-callout__body"><p>Maqolani diqqat bilan o\'qing va har bir bo\'limni amalda sinab ko\'ring.</p></div></div>',
-      '<h2>Asosiy qism</h2>',
-      '<p>Mavzuni chuqurroq o\'rganish orqali ko\'p hollarda <mark data-color="#fef08a" style="background-color: #fef08a">samaraliroq yechimlar</mark> topish mumkin.</p>',
-      '<h3>Amaliy qadamlar</h3>',
-      '<ol>',
-      '<li>Asosiy tushunchalarni tushunish</li>',
-      '<li>Amaliy qadamlarni qo\'llash</li>',
-      '<li>Natijalarni tahlil qilish</li>',
-      '</ol>',
-      '<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><label><input type="checkbox"><span></span></label><div><p>Keyingi qadamni rejalashtirish</p></div></li></ul>',
-      '<table><thead><tr><th>Bosqich</th><th>Natija</th></tr></thead><tbody><tr><td>Boshlang\'ich</td><td>Asosiy bilim</td></tr><tr><td>Rivojlantirish</td><td>Amaliy tajriba</td></tr></tbody></table>',
-      '<blockquote><p>«Bilim — eng katta boylik.»</p></blockquote>',
-      '<hr>',
-      '<h2>Xulosa</h2>',
-      '<p>Xulosa qilib aytganda, ushbu mavzu bo\'yicha bilim va tajriba muntazam rivojlantirilishi kerak.</p>',
-    ].join('');
-
-    return { title, contentHtml };
+    return null;
   }
 
   private escapeHtml(value: string): string {
