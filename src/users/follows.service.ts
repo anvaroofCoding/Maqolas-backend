@@ -12,6 +12,8 @@ import {
 } from './schemas/user-follow.schema';
 import { User, UserDocument } from './schemas/user.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { UsersService } from './users.service';
 
 @Injectable()
@@ -23,6 +25,7 @@ export class FollowsService {
     private readonly userModel: Model<UserDocument>,
     private readonly usersService: UsersService,
     private readonly notificationsService: NotificationsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   private toObjectId(id: string | Types.ObjectId) {
@@ -66,6 +69,10 @@ export class FollowsService {
     if (existing) {
       await existing.deleteOne();
       const followersCount = await this.countFollowers(target.id);
+      this.realtime.invalidate([
+        ...rtTags.userProfile(username),
+        ...rtTags.userFollowers(username),
+      ]);
       return { following: false, followersCount };
     }
 
@@ -92,6 +99,12 @@ export class FollowsService {
     });
 
     const followersCount = await this.countFollowers(target.id);
+
+    this.realtime.invalidate([
+      ...rtTags.userProfile(username),
+      ...rtTags.userFollowers(username),
+    ]);
+
     return { following: true, followersCount };
   }
 

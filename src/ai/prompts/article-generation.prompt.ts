@@ -2,7 +2,7 @@ import { countWords } from '../validators/max-words.validator';
 
 export const MAX_ARTICLE_WORDS = 5000;
 export const DEFAULT_ARTICLE_WORDS = 1500;
-export const MULTI_PASS_WORD_THRESHOLD = 1800;
+export const MULTI_PASS_WORD_THRESHOLD = 1200;
 
 const HTML_FORMAT_RULES = [
   '=== HTML FORMATLASH (faqat kerakli joylarda) ===',
@@ -34,14 +34,17 @@ const CORE_WRITING_RULES = [
 
 export function parseTargetWordCount(userPrompt: string): number {
   const patterns = [
-    /kamida\s+(\d{3,4})\s*(?:ta\s+)?(?:dan\s+)?(?:ortiq\s+)?so[''`ʼ]/i,
-    /(\d{3,4})\s*(?:ta\s+)?(?:dan\s+)?ortiq\s+so[''`ʼ]/i,
-    /(\d{3,4})\s*(?:ta\s+)?so[''`ʼ]z/i,
-    /taxminan\s+(\d{3,4})\s*(?:ta\s+)?so[''`ʼ]?z?/i,
-    /hajm[:\s]+(\d{3,4})/i,
-    /uzunligi[:\s]+(\d{3,4})/i,
-    /(\d{3,4})\s*so[''`ʼ]zlik/i,
-    /matn\s+hajmi[:\s]*(\d{3,4})/i,
+    /kamida\s+(\d{3,5})\s*(?:ta\s+)?(?:dan\s+)?(?:ortiq\s+)?(?:qator(?:li)?\s+)?so[''`ʼ]/i,
+    /(\d{3,5})\s*(?:ta\s+)?(?:qator(?:li)?\s+)?(?:dan\s+)?ortiq\s+so[''`ʼ]/i,
+    /(\d{3,5})\s*(?:ta\s+)?(?:qator(?:li)?\s+)?so[''`ʼ]z/i,
+    /taxminan\s+(\d{3,5})\s*(?:ta\s+)?(?:qator(?:li)?\s+)?so[''`ʼ]?z?/i,
+    /hajm[:\s]+(\d{3,5})/i,
+    /uzunligi[:\s]+(\d{3,5})/i,
+    /(\d{3,5})\s*(?:ta\s+)?so[''`ʼ]zlik/i,
+    /matn\s+hajmi[:\s]*(\d{3,5})/i,
+    /(\d{4,5})\s*(?:ta\s+)?so[''`ʼ]/i,
+    /maksimum?\s+(\d{3,5})/i,
+    /to[''`ʼ]liq\s+(\d{3,5})/i,
   ];
 
   for (const pattern of patterns) {
@@ -52,6 +55,10 @@ export function parseTargetWordCount(userPrompt: string): number {
         return Math.min(MAX_ARTICLE_WORDS, Math.max(500, parsed));
       }
     }
+  }
+
+  if (/\b5000\b/.test(userPrompt)) {
+    return MAX_ARTICLE_WORDS;
   }
 
   const promptWords = countWords(userPrompt);
@@ -146,8 +153,8 @@ export function buildOutlinePrompt(
   targetWords: number,
 ): string {
   const sectionCount = Math.min(
-    12,
-    Math.max(6, Math.ceil(targetWords / 450)),
+    16,
+    Math.max(6, Math.ceil(targetWords / 350)),
   );
 
   return [
@@ -215,5 +222,36 @@ export function buildSectionPrompt(
     '',
     '=== FOYDALANUVCHI TALABI (QAT\'IY BAJARILSIN) ===',
     userPrompt,
+  ].join('\n');
+}
+
+export function buildExpansionPrompt(
+  userPrompt: string,
+  articleTitle: string,
+  existingHtml: string,
+  wordsNeeded: number,
+): string {
+  const targetSectionWords = Math.min(1200, Math.max(400, wordsNeeded));
+
+  return [
+    'Sen professional o\'zbek tilida maqola yozuvchi ekspertsan.',
+    'Mavjud maqolani DAVOM ettir — yangi bo\'limlar qo\'sh.',
+    'Oldingi matnni takrorlama yoki qisqartma.',
+    '',
+    CORE_WRITING_RULES,
+    '',
+    `Maqola sarlavhasi: ${articleTitle}`,
+    `Yana taxminan ${targetSectionWords} ta so'z qo'sh (umumiy maqola to'liqroq bo'lsin).`,
+    '',
+    HTML_FORMAT_RULES,
+    '',
+    'Javobni FAQAT JSON formatida qaytar:',
+    '{"contentHtml":"<h2>Yangi bo\'lim</h2><p>...</p>..."}',
+    '',
+    '=== FOYDALANUVCHI TALABI ===',
+    userPrompt,
+    '',
+    '=== MAVJUD MATN (TAKRORLAMA) ===',
+    existingHtml.slice(-3000),
   ].join('\n');
 }

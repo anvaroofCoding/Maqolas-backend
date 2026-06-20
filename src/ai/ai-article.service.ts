@@ -9,13 +9,16 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
 import { ArticlesService } from '../articles/articles.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import {
+  callGeminiContent,
   GEMINI_GENERATION_MODELS,
   hasGeminiApiKey,
   isTemplateGarbage,
   parseArticleGenerationPayload,
-  parseGeminiApiError,
   parseSectionGenerationPayload,
+  pickGeminiErrorMessage,
 } from './gemini.util';
 import {
   AiArticleJob,
@@ -26,6 +29,7 @@ import {
   type ArticleOutlineSection,
   buildArticleSystemInstruction,
   buildArticleUserMessage,
+  buildExpansionPrompt,
   buildOutlinePrompt,
   buildSectionPrompt,
   countWordsInHtml,
@@ -55,7 +59,16 @@ export class AiArticleService {
     private readonly jobModel: Model<AiArticleJobDocument>,
     private readonly articlesService: ArticlesService,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private notifyJobChange(userId: string, jobId?: string) {
+    const tags = [...rtTags.aiArticle()];
+    if (jobId) {
+      tags.push({ type: 'AiArticle', id: jobId });
+    }
+    this.realtime.invalidate(tags, { userId });
+  }
 
   private startOfToday(): Date {
     const date = new Date();
@@ -111,6 +124,8 @@ export class AiArticleService {
     });
 
     void this.processJob(job.id);
+
+    this.notifyJobChange(userId, job.id);
 
     return { job: this.toPublicJob(job) };
   }
@@ -189,6 +204,11 @@ export class AiArticleService {
       currentStep: step,
       status: 'processing',
     });
+
+    const job = await this.jobModel.findById(jobId).select('userId').lean().exec();
+    if (job?.userId) {
+      this.notifyJobChange(String(job.userId), jobId);
+    }
   }
 
   private async processJob(jobId: string) {
@@ -229,6 +249,8 @@ export class AiArticleService {
         $push: { thinkingSteps: 'Maqola tayyor!' },
         completedAt: new Date(),
       });
+
+      this.notifyJobChange(job.userId.toString(), jobId);
     } catch (error) {
       const message =
         error instanceof Error
@@ -241,6 +263,8 @@ export class AiArticleService {
         currentStep: 'Xatolik yuz berdi',
         completedAt: new Date(),
       });
+
+      this.notifyJobChange(job.userId.toString(), jobId);
     }
   }
 
@@ -283,9 +307,7 @@ export class AiArticleService {
   }
 
   private shouldUseMultiPass(prompt: string, targetWords: number): boolean {
-    return (
-      targetWords >= MULTI_PASS_WORD_THRESHOLD || countWords(prompt) >= 70
-    );
+    return targetWords >= MULTI_PASS_WORD_THRESHOLD || countWords(prompt) >= 50;
   }
 
   private async generateWithGemini(
@@ -349,28 +371,19 @@ export class AiArticleService {
     const outline = await this.generateOutline(apiKey, prompt, targetWords);
     if (!outline || outline.sections.length === 0) return null;
 
+    this.redistributeOutlineWords(outline.sections, targetWords);
+
     const sectionHtmlParts: string[] = [];
 
     for (let i = 0; i < outline.sections.length; i += 1) {
-      const batchPrompt = buildSectionPrompt(
+      const sectionHtml = await this.generateSectionWithRetry(
+        apiKey,
         prompt,
         outline.title,
         outline.sections,
         i,
       );
-      const batchWords = outline.sections[i]?.targetWords ?? 450;
 
-      const raw = await this.callGemini(apiKey, {
-        systemInstruction: buildArticleSystemInstruction(batchWords),
-        userMessage: batchPrompt,
-        maxOutputTokens: this.estimateOutputTokens(batchWords),
-        json: true,
-        temperature: 0.72,
-      });
-
-      if (!raw) continue;
-
-      const sectionHtml = parseSectionGenerationPayload(raw);
       if (sectionHtml) {
         sectionHtmlParts.push(sectionHtml);
       }
@@ -378,13 +391,21 @@ export class AiArticleService {
 
     if (sectionHtmlParts.length === 0) return null;
 
-    const contentHtml = [
+    let contentHtml = [
       `<h1>${this.escapeHtml(outline.title)}</h1>`,
       ...sectionHtmlParts,
     ].join('');
 
+    contentHtml = await this.expandArticleIfNeeded(
+      apiKey,
+      prompt,
+      outline.title,
+      contentHtml,
+      targetWords,
+    );
+
     const words = countWordsInHtml(contentHtml);
-    if (words < Math.round(targetWords * 0.4)) {
+    if (words < Math.round(targetWords * 0.35)) {
       return null;
     }
 
@@ -392,6 +413,98 @@ export class AiArticleService {
       title: outline.title,
       contentHtml,
     };
+  }
+
+  private async generateSectionWithRetry(
+    apiKey: string,
+    prompt: string,
+    articleTitle: string,
+    sections: ArticleOutlineSection[],
+    sectionIndex: number,
+  ): Promise<string | null> {
+    const batchWords = sections[sectionIndex]?.targetWords ?? 450;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const batchPrompt = buildSectionPrompt(
+        prompt,
+        articleTitle,
+        sections,
+        sectionIndex,
+      );
+
+      const raw = await this.callGemini(apiKey, {
+        systemInstruction: buildArticleSystemInstruction(batchWords),
+        userMessage: batchPrompt,
+        maxOutputTokens: this.estimateOutputTokens(batchWords),
+        json: true,
+        temperature: attempt === 0 ? 0.72 : 0.68,
+      });
+
+      if (!raw) continue;
+
+      const sectionHtml = parseSectionGenerationPayload(raw);
+      if (sectionHtml) {
+        return sectionHtml;
+      }
+    }
+
+    return null;
+  }
+
+  private async expandArticleIfNeeded(
+    apiKey: string,
+    prompt: string,
+    articleTitle: string,
+    contentHtml: string,
+    targetWords: number,
+  ): Promise<string> {
+    let html = contentHtml;
+    let words = countWordsInHtml(html);
+    const minWords = Math.round(targetWords * 0.82);
+
+    for (let attempt = 0; attempt < 4 && words < minWords; attempt += 1) {
+      const wordsNeeded = targetWords - words;
+      const expansionPrompt = buildExpansionPrompt(
+        prompt,
+        articleTitle,
+        html,
+        wordsNeeded,
+      );
+
+      const raw = await this.callGemini(apiKey, {
+        systemInstruction: buildArticleSystemInstruction(
+          Math.min(1200, wordsNeeded),
+        ),
+        userMessage: expansionPrompt,
+        maxOutputTokens: this.estimateOutputTokens(
+          Math.min(1200, wordsNeeded),
+        ),
+        json: true,
+        temperature: 0.7,
+      });
+
+      if (!raw) continue;
+
+      const extraHtml = parseSectionGenerationPayload(raw);
+      if (!extraHtml) continue;
+
+      html += extraHtml;
+      words = countWordsInHtml(html);
+    }
+
+    return html;
+  }
+
+  private redistributeOutlineWords(
+    sections: ArticleOutlineSection[],
+    targetWords: number,
+  ): void {
+    if (sections.length === 0) return;
+
+    const perSection = Math.ceil(targetWords / sections.length);
+    for (const section of sections) {
+      section.targetWords = Math.max(250, Math.min(900, perSection));
+    }
   }
 
   private async generateOutline(
@@ -471,66 +584,15 @@ export class AiArticleService {
       temperature?: number;
     },
   ): Promise<string | null> {
-    const errors: string[] = [];
+    const result = await callGeminiContent(apiKey, options, GEMINI_GENERATION_MODELS);
 
-    for (const model of GEMINI_GENERATION_MODELS) {
-      try {
-        const maxOutputTokens = Math.min(
-          options.maxOutputTokens,
-          model.maxOutputTokens,
-        );
-
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model.name}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              systemInstruction: {
-                parts: [{ text: options.systemInstruction }],
-              },
-              contents: [{ role: 'user', parts: [{ text: options.userMessage }] }],
-              generationConfig: {
-                temperature: options.temperature ?? 0.7,
-                maxOutputTokens,
-                ...(options.json
-                  ? { responseMimeType: 'application/json' }
-                  : {}),
-              },
-            }),
-          },
-        );
-
-        if (!response.ok) {
-          const errorBody = await response.text();
-          errors.push(
-            `${model.name}: ${parseGeminiApiError(response.status, errorBody)}`,
-          );
-          continue;
-        }
-
-        const payload = (await response.json()) as {
-          candidates?: Array<{
-            content?: { parts?: Array<{ text?: string }> };
-          }>;
-        };
-
-        const raw =
-          payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-
-        if (raw) return raw;
-
-        errors.push(`${model.name}: bo'sh javob`);
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'noma\'lum xatolik';
-        errors.push(`${model.name}: ${message}`);
-      }
+    if (result.text) {
+      return result.text;
     }
 
-    if (errors.length > 0) {
-      this.logger.warn(`Gemini chaqiruvlari muvaffaqiyatsiz: ${errors.join(' | ')}`);
-      throw new Error(errors[errors.length - 1] ?? 'AI xizmati javob bermadi.');
+    if (result.errors.length > 0) {
+      this.logger.warn(`Gemini chaqiruvlari muvaffaqiyatsiz: ${result.errors.join(' | ')}`);
+      throw new Error(pickGeminiErrorMessage(result.errors));
     }
 
     return null;

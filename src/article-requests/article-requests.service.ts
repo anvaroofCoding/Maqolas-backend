@@ -9,6 +9,8 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { UsersService } from '../users/users.service';
 import { CreateArticleRequestDto } from './dto/create-article-request.dto';
 import { ListAllArticleRequestsDto } from './dto/list-all-article-requests.dto';
@@ -41,6 +43,7 @@ export class ArticleRequestsService implements OnModuleInit {
     private readonly likeModel: Model<ArticleRequestLikeDocument>,
     private readonly usersService: UsersService,
     private readonly notificationsService: NotificationsService,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async onModuleInit() {
@@ -208,6 +211,11 @@ export class ArticleRequestsService implements OnModuleInit {
       link: '/admin?tab=topic-suggestions',
     });
 
+    this.realtime.invalidate(
+      [...rtTags.adminArticleRequests(), ...rtTags.articleRequestsTrending()],
+      { admin: true },
+    );
+
     return {
       request: this.toPublicRequest(request, false),
       pending: true,
@@ -229,12 +237,20 @@ export class ArticleRequestsService implements OnModuleInit {
       await existing.deleteOne();
       request.likeCount = Math.max(0, (request.likeCount ?? 0) - 1);
       await request.save();
+      this.realtime.invalidate([
+        ...rtTags.articleRequestsTrending(),
+        ...rtTags.articleRequestsAll(),
+      ]);
       return { liked: false, likeCount: request.likeCount };
     }
 
     await this.likeModel.create({ requestId: request._id, userId });
     request.likeCount = (request.likeCount ?? 0) + 1;
     await request.save();
+    this.realtime.invalidate([
+      ...rtTags.articleRequestsTrending(),
+      ...rtTags.articleRequestsAll(),
+    ]);
     return { liked: true, likeCount: request.likeCount };
   }
 
@@ -288,6 +304,12 @@ export class ArticleRequestsService implements OnModuleInit {
     await request.populate('requesterId', 'displayName username avatarUrl');
     await request.populate('authorId', 'displayName username avatarUrl');
 
+    this.realtime.invalidate([
+      ...rtTags.articleRequestsTrending(),
+      ...rtTags.articleRequestsAll(),
+      ...rtTags.adminArticleRequests(),
+    ], { admin: true });
+
     return {
       request: this.toPublicRequest(request, false, true),
     };
@@ -308,6 +330,10 @@ export class ArticleRequestsService implements OnModuleInit {
     await request.save();
     await request.populate('requesterId', 'displayName username avatarUrl');
     await request.populate('authorId', 'displayName username avatarUrl');
+
+    this.realtime.invalidate([
+      ...rtTags.adminArticleRequests(),
+    ], { admin: true });
 
     return {
       request: this.toPublicRequest(request, false, true),
@@ -338,6 +364,18 @@ export class ArticleRequestsService implements OnModuleInit {
 
     await request.save();
     await request.populate('requesterId', 'displayName username avatarUrl');
+    await request.populate('authorId', 'displayName username avatarUrl');
+
+    const author = request.authorId as { username?: string } | undefined;
+    const authorUsername = author?.username;
+
+    this.realtime.invalidate([
+      ...rtTags.articleRequestsTrending(),
+      ...rtTags.articleRequestsAll(),
+      ...(authorUsername
+        ? rtTags.articleRequestsAuthor(authorUsername)
+        : []),
+    ]);
 
     return {
       request: this.toPublicRequest(request, false),

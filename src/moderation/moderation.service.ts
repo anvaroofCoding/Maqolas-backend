@@ -15,6 +15,8 @@ import {
   CommentLikeDocument,
 } from '../articles/schemas/comment-like.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   UserFollow,
@@ -71,7 +73,23 @@ export class ModerationService implements OnModuleInit {
     @InjectModel(UserFollow.name)
     private readonly followModel: Model<UserFollowDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private emitArticleCommentChanges(articleIds: Iterable<string>) {
+    const tags = [
+      ...rtTags.popularComments(),
+      ...rtTags.adminComments(),
+      ...rtTags.articleFeed(),
+    ];
+
+    for (const articleId of articleIds) {
+      tags.push(...rtTags.articleComments(articleId));
+      tags.push(...rtTags.articleEngagement(articleId));
+    }
+
+    this.realtime.invalidate(tags, { public: true, admin: true });
+  }
 
   async onModuleInit() {
     const result = await this.commentModel
@@ -215,6 +233,8 @@ export class ModerationService implements OnModuleInit {
       link: '/admin?tab=reports',
     });
 
+    this.realtime.invalidate(rtTags.adminReports(), { admin: true });
+
     return { report: this.toPublicReport(await this.populateReport(report.id)) };
   }
 
@@ -295,6 +315,8 @@ export class ModerationService implements OnModuleInit {
       await this.notifyApprovedComment(comment);
     }
 
+    this.emitArticleCommentChanges(countByArticle.keys());
+
     return {
       approved: comments.length,
       commentIds: comments.map((comment) => comment.id),
@@ -332,6 +354,8 @@ export class ModerationService implements OnModuleInit {
         },
       )
       .exec();
+
+    this.realtime.invalidate(rtTags.adminComments(), { admin: true });
 
     return {
       rejected: comments.length,
@@ -420,6 +444,8 @@ export class ModerationService implements OnModuleInit {
       ),
     );
 
+    this.emitArticleCommentChanges(articleIds);
+
     return {
       deleted: deleteObjectIds.length,
       commentIds: deleteComments.map((comment) => comment.id),
@@ -469,6 +495,8 @@ export class ModerationService implements OnModuleInit {
     report.reviewedBy = new Types.ObjectId(adminId);
     report.reviewedAt = new Date();
     await report.save();
+
+    this.realtime.invalidate(rtTags.adminReports(), { admin: true });
 
     return { report: this.toPublicReport(await this.populateReport(id)) };
   }
@@ -575,6 +603,11 @@ export class ModerationService implements OnModuleInit {
       await this.markReportReviewed(sourceReportId, adminId);
     }
 
+    this.realtime.invalidate(
+      [...rtTags.adminUsers(), ...rtTags.adminReports()],
+      { admin: true },
+    );
+
     return { ban: this.toPublicBan(ban) };
   }
 
@@ -612,11 +645,14 @@ export class ModerationService implements OnModuleInit {
       await this.markReportReviewed(sourceReportId, adminId);
     }
 
+    this.realtime.invalidate(rtTags.adminReports(), { admin: true });
+
     return { ban: this.toPublicBan(ban) };
   }
 
   async unbanUser(userId: string) {
     await this.deactivateUserBans(userId);
+    this.realtime.invalidate(rtTags.adminUsers(), { admin: true });
     return { success: true };
   }
 

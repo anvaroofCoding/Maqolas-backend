@@ -39,6 +39,14 @@ export class ArticlesController {
     private readonly moderationService: ModerationService,
   ) {}
 
+  @Get('homepage')
+  @UseGuards(OptionalJwtAuthGuard)
+  async getHomepage(
+    @OptionalCurrentUser() user: UserDocument | null = null,
+  ) {
+    return this.articlesService.findHomepageLayout(user?.id);
+  }
+
   @Get('feed')
   @UseGuards(OptionalJwtAuthGuard)
   async getFeed(

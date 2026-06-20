@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
 import {
@@ -27,6 +29,7 @@ export class NotificationsService {
     private readonly notificationModel: Model<NotificationDocument>,
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async create(input: CreateNotificationInput) {
@@ -39,7 +42,7 @@ export class NotificationsService {
       return null;
     }
 
-    return this.notificationModel.create({
+    const notification = await this.notificationModel.create({
       recipientId: new Types.ObjectId(input.recipientId),
       actorId: input.actorId
         ? new Types.ObjectId(input.actorId)
@@ -51,6 +54,12 @@ export class NotificationsService {
         ? new Types.ObjectId(input.articleId)
         : undefined,
     });
+
+    this.realtime.invalidate(rtTags.notifications(), {
+      userId: input.recipientId,
+    });
+
+    return notification;
   }
 
   async createSafe(input: CreateNotificationInput) {
@@ -86,6 +95,8 @@ export class NotificationsService {
           });
         }),
       );
+
+      this.realtime.invalidate(rtTags.notifications(), { admin: true });
     } catch {
       // Admin bildirishnomalari ixtiyoriy — asosiy jarayonni to'xtatmaydi
     }

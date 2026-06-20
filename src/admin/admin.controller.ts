@@ -122,6 +122,11 @@ export class AdminController {
     return { article };
   }
 
+  @Delete('articles/:id')
+  async deleteArticle(@Param('id') id: string) {
+    return this.articlesService.deleteByAdmin(id);
+  }
+
   @Post('articles/:id/approve')
   async approveArticle(
     @CurrentUser() user: UserDocument,

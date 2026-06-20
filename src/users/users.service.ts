@@ -6,9 +6,12 @@ import { join } from 'path';
 import { Model } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { User, UserDocument } from './schemas/user.schema';
 import { ensureAvatarDir } from './avatar-upload.config';
+import { normalizeGoogleAvatarUrl } from './avatar-url.util';
 
 export interface GoogleProfilePayload {
   googleId: string;
@@ -30,7 +33,15 @@ export class UsersService {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     private readonly config: ConfigService<AppConfig, true>,
     private readonly notificationsService: NotificationsService,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private emitProfileChange(user: UserDocument) {
+    this.realtime.invalidate(
+      [...rtTags.authUser(), ...rtTags.userProfile(user.username)],
+      { userId: user.id },
+    );
+  }
 
   async findById(id: string) {
     const user = await this.userModel.findById(id).exec();
@@ -97,6 +108,7 @@ export class UsersService {
   }
 
   async upsertFromGoogle(profile: GoogleProfilePayload) {
+    const avatarUrl = normalizeGoogleAvatarUrl(profile.avatarUrl);
     const existing = await this.userModel
       .findOne({ googleId: profile.googleId })
       .exec();
@@ -117,8 +129,8 @@ export class UsersService {
         existing.displayName = profile.displayName;
       }
 
-      if (profile.avatarUrl && !existing.avatarEdited) {
-        existing.avatarUrl = profile.avatarUrl;
+      if (avatarUrl && (!existing.avatarEdited || !existing.avatarUrl)) {
+        existing.avatarUrl = avatarUrl;
       }
 
       if (!existing.username) {
@@ -139,7 +151,7 @@ export class UsersService {
       displayNameEdited: false,
       firstName: profile.firstName,
       lastName: profile.lastName,
-      avatarUrl: profile.avatarUrl,
+      avatarUrl,
       provider: 'google',
       social: {},
       lastLoginAt: new Date(),
@@ -152,6 +164,11 @@ export class UsersService {
       message: `Yangi foydalanuvchi ro'yxatdan o'tdi: ${user.displayName}`,
       link: '/admin?tab=users',
     });
+
+    this.realtime.invalidate(
+      [...rtTags.adminUsers(), ...rtTags.adminStats()],
+      { admin: true },
+    );
 
     return user;
   }
@@ -182,6 +199,7 @@ export class UsersService {
     }
 
     await user.save();
+    this.emitProfileChange(user);
     return user;
   }
 
@@ -199,6 +217,7 @@ export class UsersService {
     user.avatarUrl = `${baseUrl}/uploads/avatars/${filename}?v=${version}`;
     user.avatarEdited = true;
     await user.save();
+    this.emitProfileChange(user);
     return user;
   }
 

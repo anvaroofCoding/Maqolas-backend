@@ -13,9 +13,11 @@ import { AiModule } from './ai/ai.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { UsersModule } from './users/users.module';
 import { WelcomePromoModule } from './welcome-promo/welcome-promo.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
+    RealtimeModule,
     ConfigModule.forRoot({
       isGlobal: true,
       load: [configuration],

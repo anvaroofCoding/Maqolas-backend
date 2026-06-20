@@ -12,6 +12,8 @@ import type { AppConfig } from '../config/configuration';
 import { CreateBannerDto } from './dto/create-banner.dto';
 import { UpdateBannerDto } from './dto/update-banner.dto';
 import { ensureBannerDir } from './banner-upload.config';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { Banner, BannerDocument } from './schemas/banner.schema';
 
 @Injectable()
@@ -20,6 +22,7 @@ export class BannersService {
     @InjectModel(Banner.name)
     private readonly bannerModel: Model<BannerDocument>,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly realtime: RealtimeService,
   ) {}
 
   listActive() {
@@ -60,6 +63,8 @@ export class BannersService {
       sortOrder: dto.sortOrder ?? 0,
     });
 
+    this.realtime.invalidate(rtTags.banners(), { public: true, admin: true });
+
     return { banner: banner.toJSON() };
   }
 
@@ -96,6 +101,7 @@ export class BannersService {
     }
 
     await banner.save();
+    this.realtime.invalidate(rtTags.banners(), { public: true, admin: true });
     return { banner: banner.toJSON() };
   }
 
@@ -103,6 +109,7 @@ export class BannersService {
     const banner = await this.findById(id);
     this.removeImageFile(banner.imageUrl);
     await banner.deleteOne();
+    this.realtime.invalidate(rtTags.banners(), { public: true, admin: true });
     return { deleted: true };
   }
 

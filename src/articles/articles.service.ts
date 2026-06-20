@@ -8,7 +8,12 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import type { AppConfig } from '../config/configuration';
 import { Model, Types } from 'mongoose';
-import { extractCoverImage, extractExcerpt } from './article.utils';
+import {
+  extractCoverImage,
+  extractExcerpt,
+  extractExcerptWords,
+  extractImageUrls,
+} from './article.utils';
 import {
   buildPublishedArticleSearchFilter,
   scoreArticleSearchMatch,
@@ -39,6 +44,8 @@ import { ModerationService } from '../moderation/moderation.service';
 import { containsProfanity } from '../moderation/utils/profanity-filter';
 import { APPROVED_COMMENT_FILTER } from '../moderation/utils/approved-comment-filter';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   UserFollow,
@@ -47,9 +54,15 @@ import {
 import {
   buildPopularityAggregationStages,
   computeFinalFeedScore,
+  computeTrendingScore,
   FEED_RANKING,
   type UserInterestProfile,
 } from './feed-ranking';
+import {
+  buildHomepageLayout,
+  scoreArticlesForHomepage,
+  type LayoutArticle,
+} from './homepage-layout';
 
 const NEW_ARTICLE_HOURS = 5;
 
@@ -86,6 +99,7 @@ export class ArticlesService {
     private readonly followModel: Model<UserFollowDocument>,
     private readonly notificationsService: NotificationsService,
     private readonly moderationService: ModerationService,
+    private readonly realtime: RealtimeService,
     private readonly config: ConfigService<AppConfig, true>,
   ) {}
 
@@ -183,6 +197,15 @@ export class ArticlesService {
     ]);
 
     await article.deleteOne();
+
+    this.realtime.invalidate([
+      ...rtTags.articleFeed(),
+      ...rtTags.articleMine(),
+      ...rtTags.articleSaved(),
+      ...rtTags.article(id),
+      ...rtTags.adminPublished(),
+    ]);
+
     return { deleted: true };
   }
 
@@ -194,10 +217,18 @@ export class ArticlesService {
 
     if (existing) {
       await existing.deleteOne();
+      this.realtime.invalidate(
+        [...rtTags.articleEngagement(articleId), ...rtTags.articleSaved()],
+        { userId },
+      );
       return { saved: false };
     }
 
     await this.bookmarkModel.create({ articleId: article._id, userId });
+    this.realtime.invalidate(
+      [...rtTags.articleEngagement(articleId), ...rtTags.articleSaved()],
+      { userId },
+    );
     return { saved: true };
   }
 
@@ -239,7 +270,7 @@ export class ArticlesService {
 
     const orderedArticles = bookmarks.flatMap((bookmark) => {
       const article = articleMap.get(bookmark.articleId.toString());
-      return article ? [this.toPublicArticle(article)] : [];
+      return article ? [this.toFeedArticle(article)] : [];
     });
 
     return {
@@ -267,6 +298,12 @@ export class ArticlesService {
       coverImageUrl: extractCoverImage(dto.contentHtml),
       status: dto.status ?? 'draft',
       authorId,
+    }).then((article) => {
+      this.realtime.invalidate(
+        [...rtTags.articleMine(), ...rtTags.article(article.id)],
+        { userId: authorId },
+      );
+      return article;
     });
   }
 
@@ -308,6 +345,16 @@ export class ArticlesService {
     }
 
     await article.save();
+
+    this.realtime.invalidate(
+      [
+        ...rtTags.article(id),
+        ...rtTags.articleSlug(article.slug),
+        ...rtTags.articleMine(),
+      ],
+      { userId: authorId },
+    );
+
     return article;
   }
 
@@ -346,6 +393,15 @@ export class ArticlesService {
       link: '/admin?tab=review',
       articleId: article.id,
     });
+
+    this.realtime.invalidate(
+      [
+        ...rtTags.article(id),
+        ...rtTags.articleMine(),
+        ...rtTags.adminReviewQueue(),
+      ],
+      { userId: authorId, admin: true },
+    );
 
     return article;
   }
@@ -424,6 +480,14 @@ export class ArticlesService {
     }
 
     await article.save();
+
+    this.realtime.invalidate([
+      ...rtTags.article(id),
+      ...rtTags.articleSlug(article.slug),
+      ...rtTags.adminPublished(),
+      ...(article.status === 'published' ? rtTags.articleFeed() : []),
+    ], { admin: true, public: article.status === 'published' });
+
     return this.findByIdForAdmin(id);
   }
 
@@ -442,7 +506,43 @@ export class ArticlesService {
 
     article.isPinned = isPinned;
     await article.save();
+
+    this.realtime.invalidate([
+      ...rtTags.articleFeed(),
+      ...rtTags.article(id),
+      ...rtTags.articleSlug(article.slug),
+      ...rtTags.adminPublished(),
+    ], { admin: true });
+
     return this.findModerationArticleById(id);
+  }
+
+  async deleteByAdmin(id: string) {
+    const article = await this.articleModel.findById(id).exec();
+
+    if (!article) {
+      throw new NotFoundException('Maqola topilmadi');
+    }
+
+    await Promise.all([
+      this.likeModel.deleteMany({ articleId: article._id }).exec(),
+      this.bookmarkModel.deleteMany({ articleId: article._id }).exec(),
+      this.commentModel.deleteMany({ articleId: article._id }).exec(),
+    ]);
+
+    await article.deleteOne();
+
+    this.realtime.invalidate([
+      ...rtTags.articleFeed(),
+      ...rtTags.articleMine(),
+      ...rtTags.articleSaved(),
+      ...rtTags.article(id),
+      ...rtTags.articleSlug(article.slug),
+      ...rtTags.adminPublished(),
+      ...rtTags.adminReviewQueue(),
+    ], { admin: true });
+
+    return { deleted: true };
   }
 
   async findReviewQueue(page = 1, limit = 20) {
@@ -509,6 +609,16 @@ export class ArticlesService {
       articleId: article.id,
     });
 
+    this.realtime.invalidate([
+      ...rtTags.articleFeed(),
+      ...rtTags.article(id),
+      ...rtTags.articleSlug(article.slug),
+      ...rtTags.articleMine(),
+      ...rtTags.adminReviewQueue(),
+      ...rtTags.adminPublished(),
+      ...rtTags.adminStats(),
+    ], { userId: article.authorId.toString(), admin: true });
+
     return this.findModerationArticleById(id);
   }
 
@@ -535,6 +645,12 @@ export class ArticlesService {
       link: `/yozish/${article.id}`,
       articleId: article.id,
     });
+
+    this.realtime.invalidate([
+      ...rtTags.article(id),
+      ...rtTags.articleMine(),
+      ...rtTags.adminReviewQueue(),
+    ], { userId: article.authorId.toString(), admin: true });
 
     return this.findModerationArticleById(id);
   }
@@ -571,6 +687,10 @@ export class ArticlesService {
       await existing.deleteOne();
       article.likeCount = Math.max(0, (article.likeCount ?? 0) - 1);
       await article.save();
+      this.realtime.invalidate([
+        ...rtTags.articleEngagement(articleId),
+        ...rtTags.articleFeed(),
+      ]);
       return { liked: false, likeCount: article.likeCount };
     }
 
@@ -587,6 +707,11 @@ export class ArticlesService {
       link: `/maqola/${article.slug}`,
       articleId: article.id,
     });
+
+    this.realtime.invalidate([
+      ...rtTags.articleEngagement(articleId),
+      ...rtTags.articleFeed(),
+    ]);
 
     return { liked: true, likeCount: article.likeCount };
   }
@@ -690,6 +815,8 @@ export class ArticlesService {
       .populate('authorId', 'displayName username avatarUrl')
       .exec();
 
+    this.realtime.invalidate(rtTags.adminComments(), { admin: true });
+
     return {
       comment: this.toPublicComment(populated!),
       commentCount: article.commentCount ?? 0,
@@ -762,6 +889,13 @@ export class ArticlesService {
       await article.save();
     }
 
+    this.realtime.invalidate([
+      ...rtTags.articleComments(articleId),
+      ...rtTags.articleEngagement(articleId),
+      ...rtTags.articleFeed(),
+      ...rtTags.popularComments(),
+    ]);
+
     return {
       deleted: true,
       commentCount: article.commentCount ?? 0,
@@ -799,12 +933,22 @@ export class ArticlesService {
       await existing.deleteOne();
       comment.likeCount = Math.max(0, (comment.likeCount ?? 0) - 1);
       await comment.save();
+      this.realtime.invalidate([
+        ...rtTags.articleComments(articleId),
+        ...rtTags.popularComments(),
+      ]);
       return { liked: false, likeCount: comment.likeCount };
     }
 
     await this.commentLikeModel.create({ commentId: comment._id, userId });
     comment.likeCount = (comment.likeCount ?? 0) + 1;
     await comment.save();
+
+    this.realtime.invalidate([
+      ...rtTags.articleComments(articleId),
+      ...rtTags.popularComments(),
+    ]);
+
     return { liked: true, likeCount: comment.likeCount };
   }
 
@@ -932,7 +1076,92 @@ export class ArticlesService {
       return this.findPersonalizedFeed(params, userId);
     }
 
-    return this.findPopularFeed(params);
+    return this.findTrendingFeed(params, undefined, 'popular');
+  }
+
+  async findHomepageLayout(userId?: string) {
+    const filter = await this.buildPublishedFeedFilter({});
+    const mode = userId ? 'forYou' : 'popular';
+
+    if (!filter) {
+      return this.emptyHomepageLayout(mode);
+    }
+
+    const profile = userId ? await this.buildUserInterestProfile(userId) : null;
+    const now = Date.now();
+
+    const [total, candidates, latestRaw] = await Promise.all([
+      this.articleModel.countDocuments(filter).exec(),
+      this.articleModel
+        .aggregate([
+          { $match: filter },
+          ...buildPopularityAggregationStages(new Date(now)),
+          { $sort: { isPinned: -1, popularityScore: -1, createdAt: -1 } },
+          { $limit: FEED_RANKING.HOMEPAGE_CANDIDATE_POOL },
+        ])
+        .exec(),
+      this.articleModel
+        .find(filter)
+        .sort({ isPinned: -1, publishedAt: -1, createdAt: -1 })
+        .limit(12)
+        .lean()
+        .exec(),
+    ]);
+
+    this.enrichLayoutCandidates(candidates);
+    this.enrichLayoutCandidates(latestRaw as LayoutArticle[]);
+
+    const ranked = scoreArticlesForHomepage(candidates, profile, mode, now);
+    const layoutDraft = buildHomepageLayout(
+      ranked,
+      latestRaw as LayoutArticle[],
+      now,
+    );
+
+    const layoutIds = this.collectLayoutArticleIds(layoutDraft);
+    const layoutArticles = await this.hydrateArticlesInOrder(layoutIds);
+    const layoutById = new Map(layoutArticles.map((article) => [article.id, article]));
+
+    const mapSection = (articles: LayoutArticle[]) =>
+      articles
+        .map((article) => layoutById.get(String(article._id ?? article.id)))
+        .filter((article): article is NonNullable<typeof article> => Boolean(article));
+
+    const rankedArticles = [...ranked].sort((a, b) => {
+      if (Boolean(a.article.isPinned) !== Boolean(b.article.isPinned)) {
+        return a.article.isPinned ? -1 : 1;
+      }
+      return b.spotlightScore - a.spotlightScore;
+    });
+    const feedLimit = 10;
+    const feedIds = rankedArticles
+      .map((item) => item.article._id as Types.ObjectId)
+      .slice(0, feedLimit);
+
+    return {
+      algorithm: mode,
+      layout: {
+        hero: mapSection(layoutDraft.hero)[0] ?? null,
+        leftLead: mapSection(layoutDraft.leftLead),
+        centerList: mapSection(layoutDraft.centerList),
+        editorChoice: mapSection(layoutDraft.editorChoice)[0] ?? null,
+        centerFill: mapSection(layoutDraft.centerFill),
+        latest: mapSection(layoutDraft.latest),
+        urgentLead: mapSection(layoutDraft.urgentLead)[0] ?? null,
+        urgentGrid: mapSection(layoutDraft.urgentGrid),
+        showcase: mapSection(layoutDraft.showcase),
+        lowerGrid: mapSection(layoutDraft.lowerGrid),
+      },
+      feed: {
+        articles: await this.hydrateArticlesInOrder(feedIds),
+        pagination: {
+          page: 1,
+          limit: feedLimit,
+          total,
+          totalPages: Math.ceil(total / feedLimit) || 1,
+        },
+      },
+    };
   }
 
   async searchPublished(params: SearchArticlesDto) {
@@ -974,9 +1203,7 @@ export class ArticlesService {
       })
       .slice(0, limit)
       .map(({ article }) => {
-        const json = this.toPublicArticle(article) as Record<string, unknown>;
-        delete json.contentHtml;
-        return json;
+        return this.toFeedArticle(article);
       });
 
     return { articles: ranked };
@@ -1023,7 +1250,7 @@ export class ArticlesService {
         (a, b) =>
           (order.get(String(a._id)) ?? 0) - (order.get(String(b._id)) ?? 0),
       )
-      .map((article) => this.toPublicArticle(article));
+      .map((article) => this.toFeedArticle(article));
   }
 
   private async findNewestFeed(params: ListArticlesDto) {
@@ -1058,7 +1285,7 @@ export class ArticlesService {
     ]);
 
     return {
-      articles: articles.map((article) => this.toPublicArticle(article)),
+      articles: articles.map((article) => this.toFeedArticle(article)),
       pagination: {
         page,
         limit,
@@ -1068,7 +1295,11 @@ export class ArticlesService {
     };
   }
 
-  private async findPopularFeed(params: ListArticlesDto) {
+  private async findTrendingFeed(
+    params: ListArticlesDto,
+    userId?: string,
+    mode: 'popular' | 'forYou' = 'popular',
+  ) {
     const page = params.page ?? 1;
     const limit = params.limit ?? 10;
     const skip = (page - 1) * limit;
@@ -1081,24 +1312,34 @@ export class ArticlesService {
       };
     }
 
-    const [result] = await this.articleModel
-      .aggregate([
-        { $match: filter },
-        ...buildPopularityAggregationStages(),
-        { $sort: { isPinned: -1, popularityScore: -1, createdAt: -1 } },
-        {
-          $facet: {
-            data: [{ $skip: skip }, { $limit: limit }, { $project: { _id: 1 } }],
-            total: [{ $count: 'count' }],
-          },
-        },
-      ])
-      .exec();
+    const effectiveMode = mode === 'forYou' && userId ? 'forYou' : 'popular';
+    const profile =
+      effectiveMode === 'forYou' && userId
+        ? await this.buildUserInterestProfile(userId)
+        : null;
 
-    const total = result?.total?.[0]?.count ?? 0;
-    const articleIds = (result?.data ?? []).map(
-      (item: { _id: Types.ObjectId }) => item._id,
+    const [total, candidates] = await Promise.all([
+      this.articleModel.countDocuments(filter).exec(),
+      this.articleModel
+        .aggregate([
+          { $match: filter },
+          ...buildPopularityAggregationStages(),
+          { $sort: { isPinned: -1, popularityScore: -1, createdAt: -1 } },
+          { $limit: FEED_RANKING.CANDIDATE_POOL_SIZE },
+        ])
+        .exec(),
+    ]);
+
+    const ranked = this.sortRankedArticles(
+      candidates.map((article) => ({
+        article,
+        finalScore: computeTrendingScore(article, profile, effectiveMode),
+      })),
+      effectiveMode,
     );
+
+    const pageSlice = ranked.slice(skip, skip + limit);
+    const articleIds = pageSlice.map((item) => item.article._id as Types.ObjectId);
 
     return {
       articles: await this.hydrateArticlesInOrder(articleIds),
@@ -1273,17 +1514,13 @@ export class ArticlesService {
         .exec(),
     ]);
 
-    const ranked = candidates
-      .map((article) => ({
+    const ranked = this.sortRankedArticles(
+      candidates.map((article) => ({
         article,
         finalScore: computeFinalFeedScore(article, profile, 'forYou'),
-      }))
-      .sort((a, b) => {
-        if (Boolean(a.article.isPinned) !== Boolean(b.article.isPinned)) {
-          return a.article.isPinned ? -1 : 1;
-        }
-        return b.finalScore - a.finalScore;
-      });
+      })),
+      'forYou',
+    );
 
     const pageSlice = ranked.slice(skip, skip + limit);
     const articleIds = pageSlice.map((item) => item.article._id as Types.ObjectId);
@@ -1340,6 +1577,51 @@ export class ArticlesService {
         article.publishedAt?.toISOString() ??
         new Date().toISOString(),
     }));
+  }
+
+  async listPublishedAuthorProfilesForSitemap() {
+    const rows = await this.articleModel.aggregate<{
+      username: string;
+      updatedAt?: Date;
+    }>([
+      {
+        $match: {
+          status: 'published',
+          authorId: { $exists: true, $ne: null },
+        },
+      },
+      {
+        $group: {
+          _id: '$authorId',
+          updatedAt: { $max: '$updatedAt' },
+        },
+      },
+      {
+        $lookup: {
+          from: 'users',
+          localField: '_id',
+          foreignField: '_id',
+          as: 'author',
+        },
+      },
+      { $unwind: '$author' },
+      {
+        $project: {
+          _id: 0,
+          username: '$author.username',
+          updatedAt: 1,
+        },
+      },
+      { $sort: { updatedAt: -1 } },
+    ]);
+
+    return rows
+      .filter((row) => typeof row.username === 'string' && row.username.length > 0)
+      .map((row) => ({
+        username: row.username,
+        updatedAt:
+          row.updatedAt?.toISOString() ?? new Date().toISOString(),
+      }));
   }
 
   private async findPublishedArticleById(articleId: string) {
@@ -1423,6 +1705,85 @@ export class ArticlesService {
       json.coverImageUrl = extractCoverImage(json.contentHtml);
     }
 
+    return json;
+  }
+
+  private emptyHomepageLayout(mode: 'popular' | 'forYou') {
+    return {
+      algorithm: mode,
+      layout: {
+        hero: null,
+        leftLead: [],
+        centerList: [],
+        editorChoice: null,
+        centerFill: [],
+        latest: [],
+        urgentLead: null,
+        urgentGrid: [],
+        showcase: [],
+        lowerGrid: [],
+      },
+      feed: {
+        articles: [],
+        pagination: { page: 1, limit: 10, total: 0, totalPages: 1 },
+      },
+    };
+  }
+
+  private enrichLayoutCandidates(
+    articles: Array<LayoutArticle & { contentHtml?: string }>,
+  ) {
+    for (const article of articles) {
+      if (!article.coverImageUrl && article.contentHtml) {
+        article.coverImageUrl = extractCoverImage(article.contentHtml);
+      }
+      if (!article.excerpt && article.contentHtml) {
+        article.excerpt = extractExcerpt(article.contentHtml);
+      }
+    }
+  }
+
+  private collectLayoutArticleIds(layout: Record<string, LayoutArticle[]>) {
+    const ids: Types.ObjectId[] = [];
+    const seen = new Set<string>();
+
+    for (const articles of Object.values(layout)) {
+      for (const article of articles) {
+        const id = String(article._id ?? article.id);
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        ids.push(new Types.ObjectId(id));
+      }
+    }
+
+    return ids;
+  }
+
+  private sortRankedArticles<T extends { article: { isPinned?: boolean; publishedAt?: Date; createdAt?: Date }; finalScore: number }>(
+    ranked: T[],
+    _mode: 'popular' | 'forYou',
+  ) {
+    return [...ranked].sort((a, b) => {
+      if (Boolean(a.article.isPinned) !== Boolean(b.article.isPinned)) {
+        return a.article.isPinned ? -1 : 1;
+      }
+
+      if (b.finalScore !== a.finalScore) {
+        return b.finalScore - a.finalScore;
+      }
+
+      const aDate = a.article.publishedAt ?? a.article.createdAt ?? new Date(0);
+      const bDate = b.article.publishedAt ?? b.article.createdAt ?? new Date(0);
+      return new Date(bDate).getTime() - new Date(aDate).getTime();
+    });
+  }
+
+  private toFeedArticle(article: ArticleDocument) {
+    const json = this.toPublicArticle(article) as Record<string, unknown>;
+    if (typeof json.contentHtml === 'string') {
+      json.previewText = extractExcerptWords(json.contentHtml, 50);
+    }
+    delete json.contentHtml;
     return json;
   }
 
@@ -1512,8 +1873,13 @@ export class ArticlesService {
       json.excerpt = extractExcerpt(json.contentHtml);
     }
 
-    if (!json.coverImageUrl && typeof json.contentHtml === 'string') {
-      json.coverImageUrl = extractCoverImage(json.contentHtml);
+    if (typeof json.contentHtml === 'string') {
+      const imageUrls = extractImageUrls(json.contentHtml);
+      json.imageUrls = imageUrls;
+
+      if (!json.coverImageUrl && imageUrls.length > 0) {
+        json.coverImageUrl = imageUrls[0];
+      }
     }
 
     return json;

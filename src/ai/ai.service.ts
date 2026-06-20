@@ -1,32 +1,34 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../config/configuration';
+import {
+  callGeminiContent,
+  GEMINI_AUTOCOMPLETE_MODELS,
+  hasGeminiApiKey,
+} from './gemini.util';
 
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
+
   constructor(private readonly config: ConfigService<AppConfig, true>) {}
 
-  async complete(text: string): Promise<{ suggestion: string }> {
+  async complete(text: string): Promise<{ suggestion: string; source: 'ai' | 'local' }> {
     const apiKey = this.config.get('geminiApiKey', { infer: true });
-    if (apiKey) {
+    if (apiKey && hasGeminiApiKey(apiKey)) {
       const suggestion = await this.completeWithGemini(apiKey, text);
       if (suggestion) {
-        return { suggestion };
+        return { suggestion, source: 'ai' };
       }
     }
 
-    return { suggestion: this.localFallback(text) };
+    return { suggestion: this.localFallback(text), source: 'local' };
   }
 
   private async completeWithGemini(
     apiKey: string,
     text: string,
   ): Promise<string | null> {
-    if (!apiKey?.trim()) {
-      return null;
-    }
-
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-8b'];
     const prompt = [
       'Sen o\'zbek tilida maqola yozish yordamchisisan.',
       'Foydalanuvchi yozayotgan matnning davomini qisqa va tabiiy tarzda taklif qil.',
@@ -36,41 +38,28 @@ export class AiService {
       `Matn:\n${text}`,
     ].join('\n');
 
-    for (const model of models) {
-      try {
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.65,
-                maxOutputTokens: 48,
-              },
-            }),
-          },
-        );
+    const result = await callGeminiContent(
+      apiKey,
+      {
+        userMessage: prompt,
+        maxOutputTokens: 48,
+        temperature: 0.65,
+      },
+      GEMINI_AUTOCOMPLETE_MODELS,
+    );
 
-        if (!response.ok) continue;
-
-        const payload = (await response.json()) as {
-          candidates?: Array<{
-            content?: { parts?: Array<{ text?: string }> };
-          }>;
-        };
-
-        const raw =
-          payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
-        const suggestion = this.sanitizeSuggestion(raw);
-        if (suggestion) return suggestion;
-      } catch {
-        continue;
-      }
+    if (result.errors.length > 0) {
+      this.logger.warn(
+        `AI autocomplete xatolari: ${result.errors.join(' | ')}`,
+      );
     }
 
-    return null;
+    if (!result.text) {
+      return null;
+    }
+
+    const suggestion = this.sanitizeSuggestion(result.text);
+    return suggestion || null;
   }
 
   private sanitizeSuggestion(value: string): string {

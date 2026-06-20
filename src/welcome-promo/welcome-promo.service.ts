@@ -12,6 +12,8 @@ import { Model, Types } from 'mongoose';
 import type { AppConfig } from '../config/configuration';
 import { ModerationService } from '../moderation/moderation.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import {
   APPROVED_COMMENT_FILTER,
   PENDING_COMMENT_FILTER,
@@ -47,7 +49,16 @@ export class WelcomePromoService {
     private readonly moderationService: ModerationService,
     private readonly notificationsService: NotificationsService,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly realtime: RealtimeService,
   ) {}
+
+  private emitPromoChange(promoId?: string) {
+    const tags = [...rtTags.welcomePromoActive(), ...rtTags.welcomePromoAdmin()];
+    if (promoId) {
+      tags.push(...rtTags.welcomePromoComments(promoId));
+    }
+    this.realtime.invalidate(tags, { public: true, admin: true });
+  }
 
   async getActive() {
     const promo = await this.promoModel
@@ -95,6 +106,8 @@ export class WelcomePromoService {
       linkLabel: linkUrl && linkLabel ? linkLabel : undefined,
       isActive,
     });
+
+    this.emitPromoChange(promo.id);
 
     return { promo: promo.toJSON() };
   }
@@ -148,6 +161,7 @@ export class WelcomePromoService {
     }
 
     await promo.save();
+    this.emitPromoChange(promo.id);
     return { promo: promo.toJSON() };
   }
 
@@ -168,6 +182,8 @@ export class WelcomePromoService {
       this.commentModel.deleteMany({ promoId: promo._id }).exec(),
       promo.deleteOne(),
     ]);
+
+    this.emitPromoChange(id);
 
     return { deleted: true };
   }
@@ -278,6 +294,8 @@ export class WelcomePromoService {
       link: '/admin?tab=welcome-promo',
     });
 
+    this.realtime.invalidate(rtTags.welcomePromoModeration(), { admin: true });
+
     return {
       comment: this.toPublicComment(populated!),
       commentCount: promo.commentCount ?? 0,
@@ -350,6 +368,8 @@ export class WelcomePromoService {
       await promo.save();
     }
 
+    this.emitPromoChange(promoId);
+
     return {
       deleted: true,
       commentCount: promo.commentCount ?? 0,
@@ -387,12 +407,14 @@ export class WelcomePromoService {
       await existing.deleteOne();
       comment.likeCount = Math.max(0, (comment.likeCount ?? 0) - 1);
       await comment.save();
+      this.emitPromoChange(promoId);
       return { liked: false, likeCount: comment.likeCount };
     }
 
     await this.commentLikeModel.create({ commentId: comment._id, userId });
     comment.likeCount = (comment.likeCount ?? 0) + 1;
     await comment.save();
+    this.emitPromoChange(promoId);
     return { liked: true, likeCount: comment.likeCount };
   }
 
@@ -469,6 +491,11 @@ export class WelcomePromoService {
       ),
     );
 
+    for (const promoId of countByPromo.keys()) {
+      this.emitPromoChange(promoId);
+    }
+    this.realtime.invalidate(rtTags.welcomePromoModeration(), { admin: true });
+
     return {
       approved: comments.length,
       commentIds: comments.map((comment) => comment.id),
@@ -506,6 +533,8 @@ export class WelcomePromoService {
         },
       )
       .exec();
+
+    this.realtime.invalidate(rtTags.welcomePromoModeration(), { admin: true });
 
     return {
       rejected: comments.length,
@@ -551,6 +580,15 @@ export class WelcomePromoService {
           .exec(),
       ),
     );
+
+    const promoIds = new Set([
+      ...approvedCountByPromo.keys(),
+      ...comments.map((comment) => comment.promoId.toString()),
+    ]);
+    for (const promoId of promoIds) {
+      this.emitPromoChange(promoId);
+    }
+    this.realtime.invalidate(rtTags.welcomePromoModeration(), { admin: true });
 
     return {
       deleted: comments.length,

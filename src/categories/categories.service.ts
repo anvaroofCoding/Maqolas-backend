@@ -8,6 +8,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
+import { RealtimeService } from '../realtime/realtime.service';
+import { rtTags } from '../realtime/realtime-tags';
 import { Category, CategoryDocument } from './schemas/category.schema';
 
 const DEFAULT_CATEGORIES = [
@@ -28,6 +30,7 @@ export class CategoriesService implements OnModuleInit {
   constructor(
     @InjectModel(Category.name)
     private readonly categoryModel: Model<CategoryDocument>,
+    private readonly realtime: RealtimeService,
   ) {}
 
   async onModuleInit() {
@@ -76,6 +79,8 @@ export class CategoriesService implements OnModuleInit {
       isActive: dto.isActive ?? true,
     });
 
+    this.realtime.invalidate(rtTags.categories(), { public: true, admin: true });
+
     return category.toJSON();
   }
 
@@ -100,6 +105,7 @@ export class CategoriesService implements OnModuleInit {
     if (dto.isActive !== undefined) category.isActive = dto.isActive;
 
     await category.save();
+    this.realtime.invalidate(rtTags.categories(), { public: true, admin: true });
     return category.toJSON();
   }
 
@@ -132,6 +138,7 @@ export class CategoriesService implements OnModuleInit {
     if (!category) {
       throw new NotFoundException('Mavzu topilmadi');
     }
+    this.realtime.invalidate(rtTags.categories(), { public: true, admin: true });
     return { success: true };
   }
 }

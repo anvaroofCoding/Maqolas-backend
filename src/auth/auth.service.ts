@@ -9,6 +9,7 @@ import { OAuth2Client } from 'google-auth-library';
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { Response } from 'express';
 import type { AppConfig } from '../config/configuration';
+import { normalizeGoogleAvatarUrl } from '../users/avatar-url.util';
 import { UserDocument } from '../users/schemas/user.schema';
 import { UsersService } from '../users/users.service';
 import type { GoogleAuthProfile } from './strategies/google.strategy';
@@ -103,7 +104,7 @@ export class AuthService {
           payload.name ?? payload.email.split('@')[0] ?? 'Foydalanuvchi',
         firstName: payload.given_name,
         lastName: payload.family_name,
-        avatarUrl: payload.picture,
+        avatarUrl: normalizeGoogleAvatarUrl(payload.picture),
       };
     } catch {
       throw new UnauthorizedException('Google token tasdiqlanmadi');
@@ -153,6 +154,22 @@ export class AuthService {
     }
 
     return { success: true };
+  }
+
+  async logoutWithRefreshToken(refreshToken: string, res?: Response) {
+    try {
+      const payload = await this.jwtService.verifyAsync<JwtPayload>(refreshToken, {
+        secret: this.config.get('jwt.refreshSecret', { infer: true }),
+      });
+
+      return this.logout(payload.sub, res);
+    } catch {
+      if (res) {
+        this.clearAuthCookies(res);
+      }
+
+      return { success: true };
+    }
   }
 
   getGoogleAuthUrl(): string {

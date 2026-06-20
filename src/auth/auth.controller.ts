@@ -30,6 +30,7 @@ import { UsersService } from '../users/users.service';
 import { FollowsService } from '../users/follows.service';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from './guards/optional-jwt-auth.guard';
 import {
   AuthService,
   REFRESH_COOKIE,
@@ -157,11 +158,25 @@ export class AuthController {
 
   /** Chiqish */
   @Post('logout')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(OptionalJwtAuthGuard)
   async logout(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: UserDocument | null,
+    @Body('refreshToken') bodyToken: string | undefined,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.logout(user.id, res);
+    if (user) {
+      return this.authService.logout(user.id, res);
+    }
+
+    const refreshToken =
+      bodyToken ?? (req.cookies?.[REFRESH_COOKIE] as string | undefined);
+
+    if (refreshToken) {
+      return this.authService.logoutWithRefreshToken(refreshToken, res);
+    }
+
+    this.authService.clearAuthCookies(res);
+    return { success: true };
   }
 }

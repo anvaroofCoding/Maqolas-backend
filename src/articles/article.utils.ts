@@ -9,7 +9,31 @@ export function extractExcerpt(html: string, maxLength = 240): string {
   return `${text.slice(0, maxLength).trimEnd()}…`;
 }
 
+export function extractExcerptWords(html: string, maxWords = 40): string {
+  const text = stripHtml(html);
+  if (!text) return '';
+
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return text;
+
+  return `${words.slice(0, maxWords).join(' ')}…`;
+}
+
 export function extractCoverImage(html: string): string | undefined {
-  const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-  return match?.[1];
+  return extractImageUrls(html)[0];
+}
+
+export function extractImageUrls(html: string): string[] {
+  const matches = html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi);
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const match of matches) {
+    const src = match[1]?.trim();
+    if (!src || seen.has(src)) continue;
+    seen.add(src);
+    urls.push(src);
+  }
+
+  return urls;
 }

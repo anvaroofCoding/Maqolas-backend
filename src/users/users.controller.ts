@@ -28,6 +28,13 @@ export class UsersController {
     private readonly articlesService: ArticlesService,
   ) {}
 
+  @Get('sitemap')
+  async getSitemap() {
+    const entries =
+      await this.articlesService.listPublishedAuthorProfilesForSitemap();
+    return { entries };
+  }
+
   @Get(':username')
   @UseGuards(OptionalJwtAuthGuard)
   async getPublicProfile(
