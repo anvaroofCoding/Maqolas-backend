@@ -37,7 +37,7 @@ import {
   WelcomePromoCommentLike,
   WelcomePromoCommentLikeDocument,
 } from './schemas/welcome-promo-comment-like.schema';
-import { migrateStringUserIdsToObjectId } from '../common/migrate-string-user-ids';
+import { runStringUserIdMigrationSafe } from '../common/migrate-string-user-ids';
 
 @Injectable()
 export class WelcomePromoService implements OnModuleInit {
@@ -55,7 +55,10 @@ export class WelcomePromoService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await migrateStringUserIdsToObjectId(this.commentLikeModel);
+    await runStringUserIdMigrationSafe(
+      this.commentLikeModel,
+      'welcome-promo-commentlikes',
+    );
   }
 
   private emitPromoChange(promoId?: string) {

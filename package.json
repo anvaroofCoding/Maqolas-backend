@@ -5,6 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "prestart": "npm run build",
+    "prestart:prod": "npm run build",
     "start": "node dist/main.js",
     "prestart:dev": "node scripts/kill-port.mjs 8000",
     "start:dev": "node ./node_modules/@nestjs/cli/bin/nest.js start --watch",

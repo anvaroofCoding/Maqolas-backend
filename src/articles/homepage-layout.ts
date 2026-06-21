@@ -245,10 +245,11 @@ export function buildHomepageLayout<T extends LayoutArticle>(
   });
 
   layout.latest = latest
-    .filter((article) => {
+    .map((article) => {
       const id = getArticleId(article);
-      return id && !usedIds.has(id);
+      return id ? article : null;
     })
+    .filter((article): article is T => article !== null)
     .slice(0, 8);
 
   for (const article of layout.latest) {

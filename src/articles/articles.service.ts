@@ -72,7 +72,7 @@ import {
   scoreArticlesForHomepage,
   type LayoutArticle,
 } from './homepage-layout';
-import { migrateStringUserIdsToObjectId } from '../common/migrate-string-user-ids';
+import { runStringUserIdMigrationSafe } from '../common/migrate-string-user-ids';
 
 const NEW_ARTICLE_HOURS = 5;
 
@@ -117,7 +117,7 @@ export class ArticlesService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    await migrateStringUserIdsToObjectId(this.commentLikeModel);
+    await runStringUserIdMigrationSafe(this.commentLikeModel, 'commentlikes');
   }
 
   buildUploadedImageUrl(filename: string) {
