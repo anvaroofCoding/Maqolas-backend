@@ -44,6 +44,8 @@ import { promoUploadOptions } from '../welcome-promo/promo-upload.config';
 import { CreateWelcomePromoDto } from '../welcome-promo/dto/create-welcome-promo.dto';
 import { UpdateWelcomePromoDto } from '../welcome-promo/dto/update-welcome-promo.dto';
 import { WelcomePromoService } from '../welcome-promo/welcome-promo.service';
+import { EmailService } from '../email/email.service';
+import { SendAdminEmailDto } from './dto/send-admin-email.dto';
 
 class ReviewQueueQueryDto {
   @IsOptional()
@@ -89,6 +91,7 @@ export class AdminController {
     private readonly bannersService: BannersService,
     private readonly welcomePromoService: WelcomePromoService,
     private readonly moderationService: ModerationService,
+    private readonly emailService: EmailService,
   ) {}
 
   @Get('articles/review-queue')
@@ -365,6 +368,18 @@ export class AdminController {
   @Post('comments/delete')
   async deleteComments(@Body() dto: BatchCommentIdsDto) {
     return this.moderationService.deleteCommentsByAdmin(dto.commentIds);
+  }
+
+  @Post('emails/send')
+  async sendEmails(@Body() dto: SendAdminEmailDto) {
+    const result = await this.emailService.sendCustomEmails({
+      subject: dto.subject,
+      message: dto.message,
+      recipientMode: dto.recipientMode,
+      userIds: dto.userIds,
+    });
+
+    return { success: true, ...result };
   }
 
   @Get('article-requests')

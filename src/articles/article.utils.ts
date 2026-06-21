@@ -37,3 +37,15 @@ export function extractImageUrls(html: string): string[] {
 
   return urls;
 }
+
+export const MIN_SUBMIT_WORDS = 200;
+
+export function countWordsInHtml(html: string): number {
+  const text = stripHtml(html);
+  if (!text) return 0;
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+export function hasImageInHtml(html: string): boolean {
+  return extractImageUrls(html).length > 0;
+}

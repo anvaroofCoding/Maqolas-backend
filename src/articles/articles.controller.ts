@@ -90,12 +90,15 @@ export class ArticlesController {
   }
 
   @Get('slug/:slug')
+  @UseGuards(OptionalJwtAuthGuard)
   async getBySlug(
     @Param('slug') slug: string,
     @Query('meta') meta?: string,
+    @OptionalCurrentUser() user: UserDocument | null = null,
   ) {
     const article = await this.articlesService.findPublishedBySlug(slug, {
       trackView: meta !== '1',
+      userId: user?.id,
     });
     return { article };
   }

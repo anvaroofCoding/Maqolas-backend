@@ -32,6 +32,11 @@ export class WelcomePromoCommentLike {
 export const WelcomePromoCommentLikeSchema = SchemaFactory.createForClass(
   WelcomePromoCommentLike,
 );
+WelcomePromoCommentLikeSchema.pre('validate', function normalizeUserId() {
+  if (typeof this.userId === 'string' && Types.ObjectId.isValid(this.userId)) {
+    this.userId = new Types.ObjectId(this.userId);
+  }
+});
 WelcomePromoCommentLikeSchema.index(
   { commentId: 1, userId: 1 },
   { unique: true },

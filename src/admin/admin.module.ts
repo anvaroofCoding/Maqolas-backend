@@ -5,6 +5,7 @@ import { AuthModule } from '../auth/auth.module';
 import { BannersModule } from '../banners/banners.module';
 import { CategoriesModule } from '../categories/categories.module';
 import { ModerationModule } from '../moderation/moderation.module';
+import { EmailModule } from '../email/email.module';
 import { WelcomePromoModule } from '../welcome-promo/welcome-promo.module';
 import { AdminController } from './admin.controller';
 
@@ -17,6 +18,7 @@ import { AdminController } from './admin.controller';
     BannersModule,
     WelcomePromoModule,
     ModerationModule,
+    EmailModule,
   ],
   controllers: [AdminController],
 })

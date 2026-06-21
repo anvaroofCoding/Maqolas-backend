@@ -86,6 +86,9 @@ export class User {
     index: true,
   })
   role!: UserRole;
+
+  @Prop({ type: Date })
+  lastWeeklyDigestAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

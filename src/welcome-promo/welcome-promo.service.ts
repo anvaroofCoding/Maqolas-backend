@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
@@ -36,9 +37,10 @@ import {
   WelcomePromoCommentLike,
   WelcomePromoCommentLikeDocument,
 } from './schemas/welcome-promo-comment-like.schema';
+import { migrateStringUserIdsToObjectId } from '../common/migrate-string-user-ids';
 
 @Injectable()
-export class WelcomePromoService {
+export class WelcomePromoService implements OnModuleInit {
   constructor(
     @InjectModel(WelcomePromo.name)
     private readonly promoModel: Model<WelcomePromoDocument>,
@@ -51,6 +53,10 @@ export class WelcomePromoService {
     private readonly config: ConfigService<AppConfig, true>,
     private readonly realtime: RealtimeService,
   ) {}
+
+  async onModuleInit() {
+    await migrateStringUserIdsToObjectId(this.commentLikeModel);
+  }
 
   private emitPromoChange(promoId?: string) {
     const tags = [...rtTags.welcomePromoActive(), ...rtTags.welcomePromoAdmin()];
@@ -399,8 +405,9 @@ export class WelcomePromoService {
       throw new NotFoundException('Izoh topilmadi');
     }
 
+    const userObjectId = new Types.ObjectId(userId);
     const existing = await this.commentLikeModel
-      .findOne({ commentId: comment._id, userId })
+      .findOne({ commentId: comment._id, userId: userObjectId })
       .exec();
 
     if (existing) {
@@ -411,7 +418,10 @@ export class WelcomePromoService {
       return { liked: false, likeCount: comment.likeCount };
     }
 
-    await this.commentLikeModel.create({ commentId: comment._id, userId });
+    await this.commentLikeModel.create({
+      commentId: comment._id,
+      userId: userObjectId,
+    });
     comment.likeCount = (comment.likeCount ?? 0) + 1;
     await comment.save();
     this.emitPromoChange(promoId);
@@ -717,14 +727,22 @@ export class WelcomePromoService {
   }
 
   private async getLikedCommentIds(commentIds: string[], userId: string) {
-    if (commentIds.length === 0) {
+    if (commentIds.length === 0 || !Types.ObjectId.isValid(userId)) {
+      return new Set<string>();
+    }
+
+    const commentObjectIds = commentIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (commentObjectIds.length === 0) {
       return new Set<string>();
     }
 
     const likes = await this.commentLikeModel
       .find({
-        commentId: { $in: commentIds },
-        userId,
+        commentId: { $in: commentObjectIds },
+        userId: new Types.ObjectId(userId),
       })
       .select('commentId')
       .lean()

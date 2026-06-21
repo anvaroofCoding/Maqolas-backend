@@ -2,6 +2,7 @@ export interface AppConfig {
   nodeEnv: string;
   port: number;
   frontendUrl: string;
+  publicSiteUrl: string;
   publicBaseUrl: string;
   mongodbUri: string;
   jwt: {
@@ -17,12 +18,32 @@ export interface AppConfig {
   };
   superAdminEmails: string[];
   geminiApiKey: string;
+  email: {
+    enabled: boolean;
+    from: string;
+    smtpHost: string;
+    smtpPort: number;
+    smtpSecure: boolean;
+    smtpUser: string;
+    smtpPass: string;
+  };
+  weeklyDigest: {
+    enabled: boolean;
+    cron: string;
+    timezone: string;
+    minDaysBetween: number;
+  };
 }
 
 export default (): AppConfig => ({
   nodeEnv: process.env.NODE_ENV ?? 'development',
   port: parseInt(process.env.PORT ?? '8000', 10),
   frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
+  publicSiteUrl: (
+    process.env.PUBLIC_SITE_URL ??
+    process.env.FRONTEND_URL ??
+    'http://localhost:3000'
+  ).trim(),
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'http://localhost:8000',
   mongodbUri:
     process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/maqolas',
@@ -45,4 +66,25 @@ export default (): AppConfig => ({
     .map((email) => email.trim().toLowerCase())
     .filter(Boolean),
   geminiApiKey: (process.env.GEMINI_API_KEY ?? '').trim(),
+  email: (() => {
+    const smtpUser = (process.env.SMTP_USER ?? 'uzmaqolas@gmail.com').trim();
+    const smtpPass = (process.env.SMTP_PASS ?? '')
+      .trim()
+      .replace(/\s+/g, '');
+    return {
+      from: (process.env.EMAIL_FROM ?? 'uzmaqolas@gmail.com').trim(),
+      smtpHost: (process.env.SMTP_HOST ?? 'smtp.gmail.com').trim(),
+      smtpPort: parseInt(process.env.SMTP_PORT ?? '587', 10),
+      smtpSecure: process.env.SMTP_SECURE === 'true',
+      smtpUser,
+      smtpPass,
+      enabled: Boolean(smtpPass && smtpUser),
+    };
+  })(),
+  weeklyDigest: {
+    enabled: process.env.WEEKLY_DIGEST_ENABLED !== 'false',
+    cron: (process.env.WEEKLY_DIGEST_CRON ?? '0 10 * * 0').trim(),
+    timezone: (process.env.WEEKLY_DIGEST_TIMEZONE ?? 'Asia/Tashkent').trim(),
+    minDaysBetween: parseInt(process.env.WEEKLY_DIGEST_MIN_DAYS ?? '7', 10),
+  },
 });

@@ -3,13 +3,17 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import type { AppConfig } from '../config/configuration';
 import { Model, Types } from 'mongoose';
 import {
+  countWordsInHtml,
   extractCoverImage,
+  hasImageInHtml,
+  MIN_SUBMIT_WORDS,
   extractExcerpt,
   extractExcerptWords,
   extractImageUrls,
@@ -30,6 +34,10 @@ import {
   ArticleBookmarkDocument,
 } from './schemas/article-bookmark.schema';
 import {
+  ArticleRead,
+  ArticleReadDocument,
+} from './schemas/article-read.schema';
+import {
   ArticleLike,
   ArticleLikeDocument,
 } from './schemas/article-like.schema';
@@ -44,6 +52,7 @@ import { ModerationService } from '../moderation/moderation.service';
 import { containsProfanity } from '../moderation/utils/profanity-filter';
 import { APPROVED_COMMENT_FILTER } from '../moderation/utils/approved-comment-filter';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../email/email.service';
 import { RealtimeService } from '../realtime/realtime.service';
 import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -63,6 +72,7 @@ import {
   scoreArticlesForHomepage,
   type LayoutArticle,
 } from './homepage-layout';
+import { migrateStringUserIdsToObjectId } from '../common/migrate-string-user-ids';
 
 const NEW_ARTICLE_HOURS = 5;
 
@@ -79,7 +89,7 @@ function slugify(text: string) {
 }
 
 @Injectable()
-export class ArticlesService {
+export class ArticlesService implements OnModuleInit {
   constructor(
     @InjectModel(Article.name)
     private readonly articleModel: Model<ArticleDocument>,
@@ -91,6 +101,8 @@ export class ArticlesService {
     private readonly likeModel: Model<ArticleLikeDocument>,
     @InjectModel(ArticleBookmark.name)
     private readonly bookmarkModel: Model<ArticleBookmarkDocument>,
+    @InjectModel(ArticleRead.name)
+    private readonly readModel: Model<ArticleReadDocument>,
     @InjectModel(Category.name)
     private readonly categoryModel: Model<CategoryDocument>,
     @InjectModel(User.name)
@@ -98,10 +110,15 @@ export class ArticlesService {
     @InjectModel(UserFollow.name)
     private readonly followModel: Model<UserFollowDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
     private readonly moderationService: ModerationService,
     private readonly realtime: RealtimeService,
     private readonly config: ConfigService<AppConfig, true>,
   ) {}
+
+  async onModuleInit() {
+    await migrateStringUserIdsToObjectId(this.commentLikeModel);
+  }
 
   buildUploadedImageUrl(filename: string) {
     const baseUrl = this.config
@@ -361,6 +378,19 @@ export class ArticlesService {
   async submitForReview(id: string, authorId: string, dto: SaveArticleDto) {
     const article = await this.findByIdForAuthor(id, authorId);
 
+    const wordCount = countWordsInHtml(dto.contentHtml);
+    if (wordCount < MIN_SUBMIT_WORDS) {
+      throw new BadRequestException(
+        `Maqolada kamida ${MIN_SUBMIT_WORDS} ta so'z bo'lishi kerak`,
+      );
+    }
+
+    if (!hasImageInHtml(dto.contentHtml)) {
+      throw new BadRequestException(
+        "Maqolada kamida 1 ta rasm bo'lishi kerak",
+      );
+    }
+
     if (dto.title !== undefined) {
       article.title = dto.title.trim() || article.title;
       if (dto.title.trim()) {
@@ -601,12 +631,25 @@ export class ArticlesService {
 
     await article.save();
 
+    const author = await this.userModel
+      .findById(article.authorId)
+      .select('displayName')
+      .lean()
+      .exec();
+
     void this.notificationsService.createSafe({
       recipientId: article.authorId.toString(),
       type: 'article_approved',
       message: `"${article.title}" maqolangiz tasdiqlandi va nashr etildi`,
       link: `/maqola/${article.slug}`,
       articleId: article.id,
+    });
+
+    this.emailService.notifyUsersAboutNewArticleSafe({
+      title: article.title,
+      slug: article.slug,
+      excerpt: article.excerpt,
+      authorDisplayName: author?.displayName ?? 'Muallif',
     });
 
     this.realtime.invalidate([
@@ -925,8 +968,9 @@ export class ArticlesService {
       throw new NotFoundException('Izoh topilmadi');
     }
 
+    const userObjectId = new Types.ObjectId(userId);
     const existing = await this.commentLikeModel
-      .findOne({ commentId: comment._id, userId })
+      .findOne({ commentId: comment._id, userId: userObjectId })
       .exec();
 
     if (existing) {
@@ -940,7 +984,10 @@ export class ArticlesService {
       return { liked: false, likeCount: comment.likeCount };
     }
 
-    await this.commentLikeModel.create({ commentId: comment._id, userId });
+    await this.commentLikeModel.create({
+      commentId: comment._id,
+      userId: userObjectId,
+    });
     comment.likeCount = (comment.likeCount ?? 0) + 1;
     await comment.save();
 
@@ -1006,14 +1053,22 @@ export class ArticlesService {
   }
 
   private async getLikedCommentIds(commentIds: string[], userId: string) {
-    if (commentIds.length === 0) {
+    if (commentIds.length === 0 || !Types.ObjectId.isValid(userId)) {
+      return new Set<string>();
+    }
+
+    const commentObjectIds = commentIds
+      .filter((id) => Types.ObjectId.isValid(id))
+      .map((id) => new Types.ObjectId(id));
+
+    if (commentObjectIds.length === 0) {
       return new Set<string>();
     }
 
     const likes = await this.commentLikeModel
       .find({
-        commentId: { $in: commentIds },
-        userId,
+        commentId: { $in: commentObjectIds },
+        userId: new Types.ObjectId(userId),
       })
       .select('commentId')
       .lean()
@@ -1370,7 +1425,7 @@ export class ArticlesService {
       }
     };
 
-    const [likeCategories, commentCategories, bookmarkCategories, follows, likedAuthors, commentedAuthors] =
+    const [likeCategories, commentCategories, bookmarkCategories, readCategories, follows, likedAuthors, commentedAuthors] =
       await Promise.all([
         this.likeModel
           .aggregate([
@@ -1418,6 +1473,22 @@ export class ArticlesService {
             { $unwind: '$article' },
             { $unwind: '$article.categoryIds' },
             { $group: { _id: '$article.categoryIds', count: { $sum: 1 } } },
+          ])
+          .exec(),
+        this.readModel
+          .aggregate([
+            { $match: { userId: userOid } },
+            {
+              $lookup: {
+                from: articleCollection,
+                localField: 'articleId',
+                foreignField: '_id',
+                as: 'article',
+              },
+            },
+            { $unwind: '$article' },
+            { $unwind: '$article.categoryIds' },
+            { $group: { _id: '$article.categoryIds', count: { $sum: '$readCount' } } },
           ])
           .exec(),
         this.followModel
@@ -1469,6 +1540,10 @@ export class ArticlesService {
       bookmarkCategories,
       FEED_RANKING.INTERACTION_CATEGORY_BOOKMARK,
     );
+    addCategoryWeights(
+      readCategories,
+      FEED_RANKING.INTERACTION_CATEGORY_READ,
+    );
 
     const followedAuthorIds = new Set(
       follows.map((follow) => String(follow.followingId)),
@@ -1485,6 +1560,102 @@ export class ArticlesService {
       categoryWeights,
       followedAuthorIds,
       engagedAuthorIds,
+    };
+  }
+
+  async recordArticleRead(userId: string, articleId: string) {
+    try {
+      await this.readModel.updateOne(
+        {
+          userId: new Types.ObjectId(userId),
+          articleId: new Types.ObjectId(articleId),
+        },
+        {
+          $inc: { readCount: 1 },
+          $set: { lastReadAt: new Date() },
+        },
+        { upsert: true },
+      );
+    } catch {
+      // O'qish yozuvi muvaffaqiyatsiz bo'lsa, maqola ko'rinishiga ta'sir qilmasin
+    }
+  }
+
+  async getWeeklyRecommendationsForUser(userId: string, limit = 5) {
+    const profile = await this.buildUserInterestProfile(userId);
+    const topCategoryIds = Object.entries(profile.categoryWeights)
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 2)
+      .map(([categoryId]) => categoryId);
+
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const userOid = new Types.ObjectId(userId);
+
+    const readRows = await this.readModel
+      .find({ userId: userOid })
+      .select('articleId')
+      .lean()
+      .exec();
+    const excludeIds = readRows.map((row) => row.articleId);
+
+    let topCategoryNames: string[] = [];
+    const filter: Record<string, unknown> = {
+      status: 'published',
+      publishedAt: { $gte: weekAgo },
+      authorId: { $ne: userOid },
+    };
+
+    if (excludeIds.length > 0) {
+      filter._id = { $nin: excludeIds };
+    }
+
+    if (topCategoryIds.length > 0) {
+      const categoryObjectIds = topCategoryIds.map((id) => new Types.ObjectId(id));
+      filter.categoryIds = { $in: categoryObjectIds };
+      const categories = await this.categoryModel
+        .find({ _id: { $in: categoryObjectIds } })
+        .select('name')
+        .lean()
+        .exec();
+      topCategoryNames = categories.map((category) => category.name);
+    }
+
+    const candidates = await this.articleModel
+      .find(filter)
+      .populate('authorId', 'displayName')
+      .sort({ publishedAt: -1 })
+      .limit(50)
+      .exec();
+
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const ranked = candidates
+      .map((article) => ({
+        article,
+        score: computeFinalFeedScore(article, profile, 'forYou'),
+      }))
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit);
+
+    if (ranked.length === 0) {
+      return null;
+    }
+
+    return {
+      topCategoryNames,
+      articles: ranked.map(({ article }) => {
+        const author = article.authorId as unknown as {
+          displayName?: string;
+        } | null;
+        return {
+          title: article.title,
+          slug: article.slug,
+          excerpt: article.excerpt,
+          authorDisplayName: author?.displayName ?? 'Muallif',
+        };
+      }),
     };
   }
 
@@ -1536,7 +1707,10 @@ export class ArticlesService {
     };
   }
 
-  async findPublishedBySlug(slug: string, options?: { trackView?: boolean }) {
+  async findPublishedBySlug(
+    slug: string,
+    options?: { trackView?: boolean; userId?: string },
+  ) {
     const trackView = options?.trackView !== false;
 
     const article = trackView
@@ -1557,6 +1731,10 @@ export class ArticlesService {
 
     if (!article) {
       throw new NotFoundException('Maqola topilmadi');
+    }
+
+    if (options?.userId) {
+      void this.recordArticleRead(options.userId, article.id);
     }
 
     return this.toPublicArticle(article);
