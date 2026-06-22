@@ -140,6 +140,7 @@ export class AdminController {
       id,
       user.id,
       dto.categoryIds,
+      dto.sendEmailNotification ?? false,
     );
     return { article };
   }

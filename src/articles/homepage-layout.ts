@@ -227,7 +227,7 @@ export function buildHomepageLayout<T extends LayoutArticle>(
   });
 
   layout.centerList = pickFromRanked({
-    count: 4,
+    count: 5,
     predicate: (item) => hasCover(item.article),
     sortBy: 'velocity',
     diversifyAuthors: true,
@@ -239,10 +239,7 @@ export function buildHomepageLayout<T extends LayoutArticle>(
     diversifyAuthors: true,
   });
 
-  layout.centerFill = pickFromRanked({
-    count: 4,
-    sortBy: 'spotlight',
-  });
+  layout.centerFill = [];
 
   layout.latest = latest
     .map((article) => {

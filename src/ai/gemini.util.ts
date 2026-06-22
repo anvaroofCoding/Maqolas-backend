@@ -25,17 +25,6 @@ export type GeminiCallResult = {
   errors: string[];
 };
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function parseRetryDelayMs(body: string): number | null {
-  const match = /retry in ([\d.]+)s/i.exec(body);
-  if (!match?.[1]) return null;
-  const seconds = Number.parseFloat(match[1]);
-  return Number.isFinite(seconds) ? Math.ceil(seconds * 1000) : null;
-}
-
 export async function callGeminiContent(
   apiKey: string,
   options: GeminiCallOptions,
@@ -77,14 +66,15 @@ export async function callGeminiContent(
 
         if (!response.ok) {
           const errorBody = await response.text();
-          errors.push(
-            `${model.name}: ${parseGeminiApiError(response.status, errorBody)}`,
-          );
+          const message = parseGeminiApiError(response.status, errorBody);
+          const entry = `${model.name}: ${message}`;
+          if (!errors.includes(entry)) {
+            errors.push(entry);
+          }
 
-          if (response.status === 429 && attempt === 0) {
-            const delay = parseRetryDelayMs(errorBody) ?? 2000;
-            await sleep(Math.min(delay, 25000));
-            continue;
+          // Kvota xatolarida qayta urinish limitni tezroq tugatadi
+          if (response.status === 429) {
+            break;
           }
 
           break;
@@ -115,6 +105,13 @@ export async function callGeminiContent(
   }
 
   return { text: null, errors };
+}
+
+export function isGeminiQuotaError(errors: string[]): boolean {
+  return errors.some((error) => {
+    const normalized = error.toLowerCase();
+    return normalized.includes('limiti') || normalized.includes('quota');
+  });
 }
 
 export function pickGeminiErrorMessage(errors: string[]): string {

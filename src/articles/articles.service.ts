@@ -72,6 +72,7 @@ import {
   scoreArticlesForHomepage,
   type LayoutArticle,
 } from './homepage-layout';
+import { syncFigureLayoutInHtml } from './article-html-layout';
 import { runStringUserIdMigrationSafe } from '../common/migrate-string-user-ids';
 
 const NEW_ARTICLE_HOURS = 5;
@@ -305,14 +306,18 @@ export class ArticlesService implements OnModuleInit {
     const title = dto.title?.trim() || 'Nomsiz maqola';
     const baseSlug = slugify(title);
     const slug = await this.ensureUniqueSlug(baseSlug);
+    const contentHtml = this.syncFigureLayoutHtml(
+      dto.contentHtml,
+      dto.contentJson,
+    );
 
     return this.articleModel.create({
       title,
       slug,
-      contentHtml: dto.contentHtml,
+      contentHtml,
       contentJson: dto.contentJson,
-      excerpt: extractExcerpt(dto.contentHtml),
-      coverImageUrl: extractCoverImage(dto.contentHtml),
+      excerpt: extractExcerpt(contentHtml),
+      coverImageUrl: extractCoverImage(contentHtml),
       status: dto.status ?? 'draft',
       authorId,
     }).then((article) => {
@@ -348,9 +353,12 @@ export class ArticlesService implements OnModuleInit {
       }
     }
 
-    article.contentHtml = dto.contentHtml;
-    article.excerpt = extractExcerpt(dto.contentHtml);
-    article.coverImageUrl = extractCoverImage(dto.contentHtml);
+    article.contentHtml = this.syncFigureLayoutHtml(
+      dto.contentHtml,
+      dto.contentJson ?? (article.contentJson as Record<string, unknown> | undefined),
+    );
+    article.excerpt = extractExcerpt(article.contentHtml);
+    article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
     }
@@ -401,9 +409,12 @@ export class ArticlesService implements OnModuleInit {
       }
     }
 
-    article.contentHtml = dto.contentHtml;
-    article.excerpt = extractExcerpt(dto.contentHtml);
-    article.coverImageUrl = extractCoverImage(dto.contentHtml);
+    article.contentHtml = this.syncFigureLayoutHtml(
+      dto.contentHtml,
+      dto.contentJson ?? (article.contentJson as Record<string, unknown> | undefined),
+    );
+    article.excerpt = extractExcerpt(article.contentHtml);
+    article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
     }
@@ -502,9 +513,12 @@ export class ArticlesService implements OnModuleInit {
       }
     }
 
-    article.contentHtml = dto.contentHtml;
-    article.excerpt = extractExcerpt(dto.contentHtml);
-    article.coverImageUrl = extractCoverImage(dto.contentHtml);
+    article.contentHtml = this.syncFigureLayoutHtml(
+      dto.contentHtml,
+      dto.contentJson ?? (article.contentJson as Record<string, unknown> | undefined),
+    );
+    article.excerpt = extractExcerpt(article.contentHtml);
+    article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
     }
@@ -605,6 +619,7 @@ export class ArticlesService implements OnModuleInit {
     id: string,
     adminId: string,
     categoryIds: string[],
+    sendEmailNotification = false,
   ) {
     const article = await this.articleModel.findById(id).exec();
     if (!article) {
@@ -645,12 +660,14 @@ export class ArticlesService implements OnModuleInit {
       articleId: article.id,
     });
 
-    this.emailService.notifyUsersAboutNewArticleSafe({
-      title: article.title,
-      slug: article.slug,
-      excerpt: article.excerpt,
-      authorDisplayName: author?.displayName ?? 'Muallif',
-    });
+    if (sendEmailNotification) {
+      this.emailService.notifyUsersAboutNewArticleSafe({
+        title: article.title,
+        slug: article.slug,
+        excerpt: article.excerpt,
+        authorDisplayName: author?.displayName ?? 'Muallif',
+      });
+    }
 
     this.realtime.invalidate([
       ...rtTags.articleFeed(),
@@ -1737,7 +1754,9 @@ export class ArticlesService implements OnModuleInit {
       void this.recordArticleRead(options.userId, article.id);
     }
 
-    return this.toPublicArticle(article);
+    this.applyFigureLayoutToArticle(article);
+
+    return this.toPublicArticle(article, { includeContentJson: true });
   }
 
   async listPublishedForSitemap() {
@@ -1849,6 +1868,8 @@ export class ArticlesService implements OnModuleInit {
   }
 
   private toModerationArticle(article: ArticleDocument) {
+    this.applyFigureLayoutToArticle(article);
+
     const json = article.toJSON() as Record<string, unknown>;
     const author = json.authorId as
       | {
@@ -2018,7 +2039,10 @@ export class ArticlesService implements OnModuleInit {
     return json;
   }
 
-  private toPublicArticle(article: ArticleDocument) {
+  private toPublicArticle(
+    article: ArticleDocument,
+    options?: { includeContentJson?: boolean },
+  ) {
     const json = article.toJSON() as Record<string, unknown>;
     const author = json.authorId as
       | {
@@ -2042,7 +2066,9 @@ export class ArticlesService implements OnModuleInit {
     }
 
     delete json.authorId;
-    delete json.contentJson;
+    if (!options?.includeContentJson) {
+      delete json.contentJson;
+    }
 
     this.mapCategories(json);
     json.isNew = this.isArticleNew(article);
@@ -2061,6 +2087,22 @@ export class ArticlesService implements OnModuleInit {
     }
 
     return json;
+  }
+
+  private syncFigureLayoutHtml(
+    contentHtml: string,
+    contentJson?: Record<string, unknown>,
+  ) {
+    if (!contentJson) return contentHtml;
+    return syncFigureLayoutInHtml(contentHtml, contentJson);
+  }
+
+  private applyFigureLayoutToArticle(article: ArticleDocument) {
+    if (!article.contentHtml || !article.contentJson) return;
+    article.contentHtml = syncFigureLayoutInHtml(
+      article.contentHtml,
+      article.contentJson as Record<string, unknown>,
+    );
   }
 
   private async ensureUniqueSlug(base: string, excludeId?: string) {
