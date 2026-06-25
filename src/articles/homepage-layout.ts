@@ -106,6 +106,9 @@ type PickOptions = {
   sortBy?: 'spotlight' | 'velocity' | 'engagement';
   diversifyAuthors?: boolean;
   diversifyCategories?: boolean;
+  /** Katalog kichik bo'lsa, boshqa bo'limlarda ko'rsatilgan maqolalarni ham tanlash */
+  allowReuseWhenSparse?: boolean;
+  excludeIds?: Set<string>;
 };
 
 function sortScoredPool<T extends LayoutArticle>(
@@ -163,16 +166,38 @@ export function buildHomepageLayout<T extends LayoutArticle>(
       sortBy = 'spotlight',
       diversifyAuthors = false,
       diversifyCategories = false,
+      allowReuseWhenSparse = false,
+      excludeIds,
     } = options;
 
     const picked: T[] = [];
+    const pickedIds = new Set<string>();
     const sorted = sortScoredPool(ranked, sortBy);
+
+    const isExcluded = (id: string) =>
+      excludeIds?.has(id) || pickedIds.has(id);
+
+    const markPicked = (article: T) => {
+      const id = getArticleId(article);
+      if (!id) return;
+
+      picked.push(article);
+      pickedIds.add(id);
+      usedIds.add(id);
+
+      const authorId = getAuthorId(article);
+      if (authorId) usedAuthors.add(authorId);
+
+      for (const categoryId of getCategoryIds(article)) {
+        usedCategories.add(categoryId);
+      }
+    };
 
     for (const item of sorted) {
       if (picked.length >= count) break;
 
       const id = getArticleId(item.article);
-      if (!id || usedIds.has(id)) continue;
+      if (!id || isExcluded(id) || usedIds.has(id)) continue;
       if (predicate && !predicate(item)) continue;
 
       const authorId = getAuthorId(item.article);
@@ -188,12 +213,7 @@ export function buildHomepageLayout<T extends LayoutArticle>(
         continue;
       }
 
-      picked.push(item.article);
-      usedIds.add(id);
-      if (authorId) usedAuthors.add(authorId);
-      for (const categoryId of categoryIds) {
-        usedCategories.add(categoryId);
-      }
+      markPicked(item.article);
     }
 
     if (picked.length < count) {
@@ -201,11 +221,23 @@ export function buildHomepageLayout<T extends LayoutArticle>(
         if (picked.length >= count) break;
 
         const id = getArticleId(item.article);
-        if (!id || usedIds.has(id)) continue;
+        if (!id || isExcluded(id) || usedIds.has(id)) continue;
+        if (predicate && !predicate(item)) continue;
+
+        markPicked(item.article);
+      }
+    }
+
+    if (picked.length < count && allowReuseWhenSparse) {
+      for (const item of sorted) {
+        if (picked.length >= count) break;
+
+        const id = getArticleId(item.article);
+        if (!id || isExcluded(id)) continue;
         if (predicate && !predicate(item)) continue;
 
         picked.push(item.article);
-        usedIds.add(id);
+        pickedIds.add(id);
       }
     }
 
@@ -241,18 +273,6 @@ export function buildHomepageLayout<T extends LayoutArticle>(
 
   layout.centerFill = [];
 
-  layout.latest = latest
-    .map((article) => {
-      const id = getArticleId(article);
-      return id ? article : null;
-    })
-    .filter((article): article is T => article !== null)
-    .slice(0, 8);
-
-  for (const article of layout.latest) {
-    usedIds.add(getArticleId(article));
-  }
-
   layout.urgentLead = pickFromRanked({
     count: 1,
     predicate: (item) => hasCover(item.article),
@@ -260,11 +280,20 @@ export function buildHomepageLayout<T extends LayoutArticle>(
     diversifyAuthors: true,
   });
 
+  const urgentLeadId = layout.urgentLead[0]
+    ? getArticleId(layout.urgentLead[0])
+    : '';
+  const urgentExcludeIds = urgentLeadId
+    ? new Set<string>([urgentLeadId])
+    : undefined;
+
   layout.urgentGrid = pickFromRanked({
     count: 4,
     predicate: (item) => hasCover(item.article),
     sortBy: 'velocity',
     diversifyCategories: true,
+    allowReuseWhenSparse: true,
+    excludeIds: urgentExcludeIds,
   });
 
   layout.showcase = pickFromRanked({
@@ -272,12 +301,22 @@ export function buildHomepageLayout<T extends LayoutArticle>(
     predicate: (item) => hasCover(item.article),
     sortBy: 'spotlight',
     diversifyCategories: true,
+    allowReuseWhenSparse: true,
   });
 
   layout.lowerGrid = pickFromRanked({
     count: 2,
     sortBy: 'spotlight',
+    allowReuseWhenSparse: true,
   });
+
+  layout.latest = latest
+    .map((article) => {
+      const id = getArticleId(article);
+      return id ? article : null;
+    })
+    .filter((article): article is T => article !== null)
+    .slice(0, 8);
 
   if (layout.hero.length === 0 && ranked.length > 0) {
     const fallback = sortScoredPool(ranked, 'spotlight').find((item) => {
