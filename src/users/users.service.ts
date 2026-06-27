@@ -169,6 +169,7 @@ export class UsersService {
       [...rtTags.adminUsers(), ...rtTags.adminStats()],
       { admin: true },
     );
+    this.realtime.schedulePlatformStatsBroadcast();
 
     return user;
   }
@@ -246,5 +247,14 @@ export class UsersService {
 
   findByIdWithRefreshHash(id: string) {
     return this.userModel.findById(id).select('+refreshTokenHash').exec();
+  }
+
+  async getPlatformPublicStats() {
+    const [totalUsers, onlineNow] = await Promise.all([
+      this.userModel.countDocuments().exec(),
+      Promise.resolve(this.realtime.getOnlineCount()),
+    ]);
+
+    return { totalUsers, onlineNow };
   }
 }

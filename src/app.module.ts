@@ -17,6 +17,7 @@ import { UsersModule } from './users/users.module';
 import { WelcomePromoModule } from './welcome-promo/welcome-promo.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { DigestModule } from './digest/digest.module';
+import { PinsModule } from './pins/pins.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { DigestModule } from './digest/digest.module';
     AiModule,
     WelcomePromoModule,
     DigestModule,
+    PinsModule,
   ],
 })
 export class AppModule {}

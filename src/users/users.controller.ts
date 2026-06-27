@@ -35,6 +35,11 @@ export class UsersController {
     return { entries };
   }
 
+  @Get('platform-stats')
+  async getPlatformStats() {
+    return this.usersService.getPlatformPublicStats();
+  }
+
   @Get(':username')
   @UseGuards(OptionalJwtAuthGuard)
   async getPublicProfile(

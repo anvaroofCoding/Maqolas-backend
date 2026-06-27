@@ -7,6 +7,11 @@ export type RealtimeInvalidatePayload = {
   tags: RealtimeTag[];
 };
 
+export type PlatformStatsPayload = {
+  onlineNow: number;
+  totalUsers: number;
+};
+
 export type RealtimeInvalidateOptions = {
   /** Broadcast to all connected clients */
   public?: boolean;

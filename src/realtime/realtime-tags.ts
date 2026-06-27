@@ -74,4 +74,15 @@ export const rtTags = {
     { type: 'AiArticle', id: 'ARCHIVE' },
   ],
   authUser: (): RealtimeTag[] => [{ type: 'AuthUser' }],
+  pinFeed: (): RealtimeTag[] => [{ type: 'Pin', id: 'LIST' }],
+  pin: (id: string): RealtimeTag[] => [{ type: 'Pin', id }],
+  pinSlug: (slug: string): RealtimeTag[] => [
+    { type: 'Pin', id: `slug-${slug}` },
+  ],
+  pinEngagement: (id: string): RealtimeTag[] => [
+    { type: 'Pin', id: `engagement-${id}` },
+  ],
+  pinComments: (pinId: string): RealtimeTag[] => [
+    { type: 'PinComment', id: pinId },
+  ],
 };

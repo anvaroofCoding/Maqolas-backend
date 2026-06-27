@@ -23,13 +23,22 @@ export function extractCoverImage(html: string): string | undefined {
   return extractImageUrls(html)[0];
 }
 
+function sanitizeImageUrl(url: string): string {
+  return url
+    .replace(/&amp;/gi, '&')
+    .replace(/&#0*38;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/gi, "'")
+    .trim();
+}
+
 export function extractImageUrls(html: string): string[] {
   const matches = html.matchAll(/<img[^>]+src=["']([^"']+)["']/gi);
   const urls: string[] = [];
   const seen = new Set<string>();
 
   for (const match of matches) {
-    const src = match[1]?.trim();
+    const src = sanitizeImageUrl(match[1] ?? '');
     if (!src || seen.has(src)) continue;
     seen.add(src);
     urls.push(src);

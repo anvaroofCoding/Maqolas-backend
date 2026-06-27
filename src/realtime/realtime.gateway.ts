@@ -12,7 +12,7 @@ import { Model } from 'mongoose';
 import type { Server, Socket } from 'socket.io';
 import type { AppConfig } from '../config/configuration';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import type { RealtimeInvalidatePayload } from './realtime.types';
+import type { RealtimeInvalidatePayload, PlatformStatsPayload } from './realtime.types';
 
 type JwtPayload = {
   sub: string;
@@ -53,6 +53,7 @@ export class RealtimeGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
   private readonly logger = new Logger(RealtimeGateway.name);
+  private platformStatsTimer: ReturnType<typeof setTimeout> | null = null;
 
   @WebSocketServer()
   server!: Server;
@@ -90,35 +91,64 @@ export class RealtimeGateway
     await client.join('public');
 
     const token = this.extractToken(client);
-    if (!token) {
-      return;
-    }
+    if (token) {
+      try {
+        const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
+          secret: this.config.get('jwt.accessSecret', { infer: true }),
+        });
 
-    try {
-      const payload = await this.jwtService.verifyAsync<JwtPayload>(token, {
-        secret: this.config.get('jwt.accessSecret', { infer: true }),
-      });
+        if (payload.sub) {
+          await client.join(`user:${payload.sub}`);
 
-      if (payload.sub) {
-        await client.join(`user:${payload.sub}`);
+          const user = await this.userModel
+            .findById(payload.sub)
+            .select('role')
+            .lean()
+            .exec();
 
-        const user = await this.userModel
-          .findById(payload.sub)
-          .select('role')
-          .lean()
-          .exec();
-
-        if (user?.role === 'super_admin') {
-          await client.join('admin');
+          if (user?.role === 'super_admin') {
+            await client.join('admin');
+          }
         }
+      } catch {
+        this.logger.debug(`Realtime auth failed for client ${client.id}`);
       }
-    } catch {
-      this.logger.debug(`Realtime auth failed for client ${client.id}`);
     }
+
+    this.schedulePlatformStatsBroadcast();
   }
 
   handleDisconnect(client: Socket) {
     client.rooms.clear();
+    this.schedulePlatformStatsBroadcast();
+  }
+
+  schedulePlatformStatsBroadcast() {
+    if (this.platformStatsTimer) {
+      return;
+    }
+
+    this.platformStatsTimer = setTimeout(() => {
+      this.platformStatsTimer = null;
+      void this.broadcastPlatformStats();
+    }, 250);
+  }
+
+  private async broadcastPlatformStats() {
+    if (!this.server) {
+      return;
+    }
+
+    const payload: PlatformStatsPayload = {
+      onlineNow: this.getConnectedCount(),
+      totalUsers: await this.userModel.countDocuments().exec(),
+    };
+
+    this.server.to('public').emit('platform-stats', payload);
+  }
+
+  getConnectedCount() {
+    return this.server?.sockets?.sockets?.size ?? 0;
   }
 
   emitInvalidate(rooms: string[], payload: RealtimeInvalidatePayload) {

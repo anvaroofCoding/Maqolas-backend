@@ -35,4 +35,12 @@ export class RealtimeService {
 
     this.gateway.emitInvalidate(uniqueRooms, payload);
   }
+
+  getOnlineCount() {
+    return this.gateway.getConnectedCount();
+  }
+
+  schedulePlatformStatsBroadcast() {
+    this.gateway.schedulePlatformStatsBroadcast();
+  }
 }
