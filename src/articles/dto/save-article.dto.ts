@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEnum,
   IsObject,
   IsOptional,
@@ -20,6 +22,13 @@ export class SaveArticleDto {
   @IsOptional()
   @IsObject()
   contentJson?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  hashtags?: string[];
 
   @IsOptional()
   @IsEnum(['draft'])

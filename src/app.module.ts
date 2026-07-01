@@ -18,6 +18,7 @@ import { WelcomePromoModule } from './welcome-promo/welcome-promo.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { DigestModule } from './digest/digest.module';
 import { PinsModule } from './pins/pins.module';
+import { SavedPhrasesModule } from './saved-phrases/saved-phrases.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { PinsModule } from './pins/pins.module';
     WelcomePromoModule,
     DigestModule,
     PinsModule,
+    SavedPhrasesModule,
   ],
 })
 export class AppModule {}

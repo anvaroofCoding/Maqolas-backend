@@ -70,6 +70,12 @@ export class ArticlesController {
     return this.articlesService.findByAuthor(user.id, query);
   }
 
+  @Get('mine/hashtag-suggestions')
+  @UseGuards(JwtAuthGuard)
+  async getHashtagSuggestions(@CurrentUser() user: UserDocument) {
+    return this.articlesService.getHashtagSuggestions(user.id);
+  }
+
   @Get('saved')
   @UseGuards(JwtAuthGuard)
   async getSaved(

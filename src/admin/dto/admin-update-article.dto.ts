@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsObject, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class AdminUpdateArticleDto {
   @IsOptional()
@@ -13,4 +13,11 @@ export class AdminUpdateArticleDto {
   @IsOptional()
   @IsObject()
   contentJson?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MaxLength(50, { each: true })
+  hashtags?: string[];
 }

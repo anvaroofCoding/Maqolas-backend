@@ -76,6 +76,9 @@ export class Article {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Category' }], default: [], index: true })
   categoryIds!: Types.ObjectId[];
 
+  @Prop({ type: [String], default: [], index: true })
+  hashtags!: string[];
+
   createdAt!: Date;
   updatedAt!: Date;
 }

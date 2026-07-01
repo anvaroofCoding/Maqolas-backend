@@ -9,7 +9,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Model } from 'mongoose';
-import type { Server, Socket } from 'socket.io';
+import type { Namespace, Socket } from 'socket.io';
 import type { AppConfig } from '../config/configuration';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import type { RealtimeInvalidatePayload, PlatformStatsPayload } from './realtime.types';
@@ -56,7 +56,7 @@ export class RealtimeGateway
   private platformStatsTimer: ReturnType<typeof setTimeout> | null = null;
 
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   constructor(
     private readonly jwtService: JwtService,
@@ -148,7 +148,7 @@ export class RealtimeGateway
   }
 
   getConnectedCount() {
-    return this.server?.sockets?.sockets?.size ?? 0;
+    return this.server?.sockets?.size ?? 0;
   }
 
   emitInvalidate(rooms: string[], payload: RealtimeInvalidatePayload) {

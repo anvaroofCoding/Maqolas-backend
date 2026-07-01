@@ -29,6 +29,7 @@ import { ListCommentsDto } from './dto/list-comments.dto';
 import { SearchArticlesDto } from './dto/search-articles.dto';
 import { AdminUpdateArticleDto } from '../admin/dto/admin-update-article.dto';
 import { SaveArticleDto } from './dto/save-article.dto';
+import { normalizeHashtags } from './utils/normalize-hashtags';
 import {
   ArticleBookmark,
   ArticleBookmarkDocument,
@@ -316,6 +317,7 @@ export class ArticlesService implements OnModuleInit {
       slug,
       contentHtml,
       contentJson: dto.contentJson,
+      hashtags: normalizeHashtags(dto.hashtags),
       excerpt: extractExcerpt(contentHtml),
       coverImageUrl: extractCoverImage(contentHtml),
       status: dto.status ?? 'draft',
@@ -340,6 +342,32 @@ export class ArticlesService implements OnModuleInit {
     return article;
   }
 
+  async getHashtagSuggestions(authorId: string, limit = 20) {
+    const cappedLimit = Math.min(Math.max(limit, 1), 50);
+    const articles = await this.articleModel
+      .find({ authorId })
+      .select('hashtags updatedAt')
+      .sort({ updatedAt: -1 })
+      .lean()
+      .exec();
+
+    const seen = new Set<string>();
+    const hashtags: string[] = [];
+
+    for (const article of articles) {
+      for (const tag of article.hashtags ?? []) {
+        if (!tag || seen.has(tag)) continue;
+        seen.add(tag);
+        hashtags.push(tag);
+        if (hashtags.length >= cappedLimit) {
+          return { hashtags };
+        }
+      }
+    }
+
+    return { hashtags };
+  }
+
   async update(id: string, authorId: string, dto: SaveArticleDto) {
     const article = await this.findByIdForAuthor(id, authorId);
 
@@ -361,6 +389,9 @@ export class ArticlesService implements OnModuleInit {
     article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
+    }
+    if (dto.hashtags !== undefined) {
+      article.hashtags = normalizeHashtags(dto.hashtags);
     }
     if (
       dto.status === 'draft' &&
@@ -417,6 +448,9 @@ export class ArticlesService implements OnModuleInit {
     article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
+    }
+    if (dto.hashtags !== undefined) {
+      article.hashtags = normalizeHashtags(dto.hashtags);
     }
 
     article.status = 'review';
@@ -521,6 +555,9 @@ export class ArticlesService implements OnModuleInit {
     article.coverImageUrl = extractCoverImage(article.contentHtml);
     if (dto.contentJson !== undefined) {
       article.contentJson = dto.contentJson;
+    }
+    if (dto.hashtags !== undefined) {
+      article.hashtags = normalizeHashtags(dto.hashtags);
     }
 
     await article.save();
