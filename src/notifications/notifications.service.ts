@@ -5,6 +5,7 @@ import { RealtimeService } from '../realtime/realtime.service';
 import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
+import { PushNotificationsService } from './push-notifications.service';
 import {
   Notification,
   NotificationDocument,
@@ -30,6 +31,7 @@ export class NotificationsService {
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
     private readonly realtime: RealtimeService,
+    private readonly pushNotifications: PushNotificationsService,
   ) {}
 
   async create(input: CreateNotificationInput) {
@@ -57,6 +59,15 @@ export class NotificationsService {
 
     this.realtime.invalidate(rtTags.notifications(), {
       userId: input.recipientId,
+    });
+
+    void this.pushNotifications.sendToUser(input.recipientId, {
+      body: input.message,
+      data: {
+        notificationId: notification.id,
+        type: input.type,
+        ...(input.link ? { link: input.link } : {}),
+      },
     });
 
     return notification;

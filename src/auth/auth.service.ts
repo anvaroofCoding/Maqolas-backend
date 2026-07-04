@@ -86,9 +86,15 @@ export class AuthService {
 
   async verifyGoogleIdToken(idToken: string): Promise<GoogleAuthProfile> {
     try {
+      const audiences = [
+        this.config.get('google.clientId', { infer: true }),
+        process.env.GOOGLE_ANDROID_CLIENT_ID?.trim(),
+        process.env.GOOGLE_IOS_CLIENT_ID?.trim(),
+      ].filter((id): id is string => Boolean(id));
+
       const ticket = await this.googleClient.verifyIdToken({
         idToken,
-        audience: this.config.get('google.clientId', { infer: true }),
+        audience: audiences,
       });
 
       const payload = ticket.getPayload();

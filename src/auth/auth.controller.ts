@@ -49,12 +49,13 @@ export class AuthController {
   ) {}
 
   private async getUserStats(userId: string) {
-    const [articlesCount, followersCount] = await Promise.all([
+    const [articlesCount, followersCount, followingCount] = await Promise.all([
       this.articleModel.countDocuments({ authorId: userId }).exec(),
       this.followsService.countFollowers(userId),
+      this.followsService.countFollowing(userId),
     ]);
 
-    return { articlesCount, followersCount };
+    return { articlesCount, followersCount, followingCount };
   }
 
   /** Brauzer redirect — Google OAuth boshlash */

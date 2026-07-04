@@ -39,6 +39,12 @@ export class FollowsService {
     return followerIds.length;
   }
 
+  async countFollowing(userId: string) {
+    return this.followModel
+      .countDocuments({ followerId: this.toObjectId(userId) })
+      .exec();
+  }
+
   async isFollowing(followerId: string, followingId: string) {
     const existing = await this.followModel
       .exists({
@@ -147,6 +153,53 @@ export class FollowsService {
 
     return {
       followers,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      },
+    };
+  }
+
+  async getFollowing(username: string, query: ListFollowersDto) {
+    const user = await this.usersService.findByUsername(username);
+    if (!user) {
+      throw new NotFoundException('Foydalanuvchi topilmadi');
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+    const followerObjectId = this.toObjectId(user.id);
+
+    const [follows, total] = await Promise.all([
+      this.followModel
+        .find({ followerId: followerObjectId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('followingId', 'displayName username avatarUrl bio')
+        .exec(),
+      this.countFollowing(user.id),
+    ]);
+
+    const seenFollowingIds = new Set<string>();
+    const following = follows
+      .map((follow) => {
+        const target = follow.followingId as unknown as UserDocument;
+        return this.usersService.toPublicProfile(target);
+      })
+      .filter((target): target is NonNullable<typeof target> => {
+        if (!target) return false;
+        const targetId = String(target.id ?? '');
+        if (!targetId || seenFollowingIds.has(targetId)) return false;
+        seenFollowingIds.add(targetId);
+        return true;
+      });
+
+    return {
+      following,
       pagination: {
         page,
         limit,

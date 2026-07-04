@@ -8,17 +8,20 @@ import {
   Notification,
   NotificationSchema,
 } from './schemas/notification.schema';
+import { PushToken, PushTokenSchema } from './schemas/push-token.schema';
+import { PushNotificationsService } from './push-notifications.service';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Notification.name, schema: NotificationSchema },
       { name: User.name, schema: UserSchema },
+      { name: PushToken.name, schema: PushTokenSchema },
     ]),
     forwardRef(() => AuthModule),
   ],
   controllers: [NotificationsController],
-  providers: [NotificationsService],
-  exports: [NotificationsService],
+  providers: [NotificationsService, PushNotificationsService],
+  exports: [NotificationsService, PushNotificationsService],
 })
 export class NotificationsModule {}

@@ -51,9 +51,11 @@ export class UsersController {
       throw new NotFoundException('Foydalanuvchi topilmadi');
     }
 
-    const [articlesCount, followersCount, isFollowing] = await Promise.all([
+    const [articlesCount, followersCount, followingCount, isFollowing] =
+      await Promise.all([
       this.articlesService.countPublishedByAuthor(user.id),
       this.followsService.countFollowers(user.id),
+      this.followsService.countFollowing(user.id),
       viewer
         ? this.followsService.isFollowing(viewer.id, user.id)
         : Promise.resolve(false),
@@ -61,7 +63,7 @@ export class UsersController {
 
     return {
       user: this.usersService.toPublicProfile(user),
-      stats: { articlesCount, followersCount },
+      stats: { articlesCount, followersCount, followingCount },
       isFollowing,
     };
   }
@@ -90,6 +92,14 @@ export class UsersController {
     @Query() query: ListFollowersDto,
   ) {
     return this.followsService.getFollowers(username, query);
+  }
+
+  @Get(':username/following')
+  async getFollowing(
+    @Param('username') username: string,
+    @Query() query: ListFollowersDto,
+  ) {
+    return this.followsService.getFollowing(username, query);
   }
 
   @Post(':username/follow')
