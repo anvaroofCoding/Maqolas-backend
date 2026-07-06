@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Patch,
   Post,
@@ -24,6 +25,8 @@ import {
 } from '../articles/schemas/article.schema';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { GoogleTokenDto } from './dto/google-token.dto';
+import { DeleteAccountDto } from '../users/dto/delete-account.dto';
+import { AccountDeletionService } from '../users/account-deletion.service';
 import { avatarUploadOptions } from '../users/avatar-upload.config';
 import { UpdateProfileDto } from '../users/dto/update-profile.dto';
 import { UsersService } from '../users/users.service';
@@ -44,6 +47,7 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly usersService: UsersService,
     private readonly followsService: FollowsService,
+    private readonly accountDeletionService: AccountDeletionService,
     @InjectModel(Article.name)
     private readonly articleModel: Model<ArticleDocument>,
   ) {}
@@ -138,6 +142,18 @@ export class AuthController {
       user: updated.toJSON(),
       stats: await this.getUserStats(updated.id),
     };
+  }
+
+  @Delete('me')
+  @UseGuards(JwtAuthGuard)
+  async deleteMe(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: DeleteAccountDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    await this.accountDeletionService.deleteAccount(user.id, dto.email);
+    await this.authService.logout(user.id, res);
+    return { deleted: true };
   }
 
   /** Access token yangilash */

@@ -1,12 +1,13 @@
-import { IsString, MaxLength, MinLength } from 'class-validator';
-import { MaxWords } from '../validators/max-words.validator';
+import { IsString, MaxLength } from 'class-validator';
+import { MaxWords, MinWords } from '../validators/max-words.validator';
 
+export const MIN_PROMPT_WORDS = 50;
 export const MAX_PROMPT_WORDS = 1000;
 
 export class GenerateArticleDto {
   @IsString()
-  @MinLength(20, {
-    message: 'Maqola talabini kamida 20 ta belgidan yozing',
+  @MinWords(MIN_PROMPT_WORDS, {
+    message: `Maqola talabini kamida ${MIN_PROMPT_WORDS} ta so'zdan yozing`,
   })
   @MaxLength(15000)
   @MaxWords(MAX_PROMPT_WORDS, {

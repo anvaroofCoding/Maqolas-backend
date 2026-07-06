@@ -46,6 +46,14 @@ import { UpdateWelcomePromoDto } from '../welcome-promo/dto/update-welcome-promo
 import { WelcomePromoService } from '../welcome-promo/welcome-promo.service';
 import { EmailService } from '../email/email.service';
 import { SendAdminEmailDto } from './dto/send-admin-email.dto';
+import { FeedbackService } from '../feedback/feedback.service';
+import {
+  BatchFeedbackIdsDto,
+  RejectFeedbackDto,
+} from '../feedback/dto/moderate-feedback.dto';
+import { ListFeedbackModerationDto } from '../feedback/dto/list-feedback.dto';
+import { AiChatService } from '../ai/ai-chat.service';
+import { UpdateUserAiChatLimitDto } from './dto/update-user-ai-chat-limit.dto';
 
 class ReviewQueueQueryDto {
   @IsOptional()
@@ -92,6 +100,8 @@ export class AdminController {
     private readonly welcomePromoService: WelcomePromoService,
     private readonly moderationService: ModerationService,
     private readonly emailService: EmailService,
+    private readonly feedbackService: FeedbackService,
+    private readonly aiChatService: AiChatService,
   ) {}
 
   @Get('articles/review-queue')
@@ -323,6 +333,14 @@ export class AdminController {
     return this.moderationService.unbanUser(id);
   }
 
+  @Patch('users/:id/ai-chat-limit')
+  async updateUserAiChatLimit(
+    @Param('id') id: string,
+    @Body() dto: UpdateUserAiChatLimitDto,
+  ) {
+    return this.aiChatService.updateUserDailyLimit(id, dto.aiChatDailyLimit);
+  }
+
   @Post('bans/ip')
   async banIp(
     @CurrentUser() user: UserDocument,
@@ -369,6 +387,40 @@ export class AdminController {
   @Post('comments/delete')
   async deleteComments(@Body() dto: BatchCommentIdsDto) {
     return this.moderationService.deleteCommentsByAdmin(dto.commentIds);
+  }
+
+  @Get('feedback')
+  async listFeedback(@Query() query: ListFeedbackModerationDto) {
+    return this.feedbackService.listForModeration(
+      query.page,
+      query.limit,
+      query.status ?? 'pending',
+    );
+  }
+
+  @Post('feedback/approve')
+  async approveFeedback(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: BatchFeedbackIdsDto,
+  ) {
+    return this.feedbackService.approveBatch(dto.feedbackIds, user.id);
+  }
+
+  @Post('feedback/reject')
+  async rejectFeedback(
+    @CurrentUser() user: UserDocument,
+    @Body() dto: RejectFeedbackDto,
+  ) {
+    return this.feedbackService.rejectBatch(
+      dto.feedbackIds,
+      user.id,
+      dto.reason,
+    );
+  }
+
+  @Post('feedback/delete')
+  async deleteFeedback(@Body() dto: BatchFeedbackIdsDto) {
+    return this.feedbackService.deleteBatch(dto.feedbackIds);
   }
 
   @Post('emails/send')

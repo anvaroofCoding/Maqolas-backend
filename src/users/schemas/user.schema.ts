@@ -89,6 +89,10 @@ export class User {
 
   @Prop({ type: Date })
   lastWeeklyDigestAt?: Date;
+
+  /** Kunlik AI suhbat yaratish limiti (standart: 2). Admin belgilaydi. */
+  @Prop({ type: Number, min: 0, max: 100 })
+  aiChatDailyLimit?: number;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

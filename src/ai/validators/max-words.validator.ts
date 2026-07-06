@@ -40,3 +40,32 @@ export function MaxWords(max: number, validationOptions?: ValidationOptions) {
     });
   };
 }
+
+@ValidatorConstraint({ name: 'minWords', async: false })
+export class MinWordsConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown, args: ValidationArguments): boolean {
+    if (typeof value !== 'string') return false;
+    const min = (args.constraints[0] as number) ?? 1;
+    return countWords(value) >= min;
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    const min = (args.constraints[0] as number) ?? 1;
+    return `Maqola talabini kamida ${min} ta so'zdan yozing`;
+  }
+}
+
+export function MinWords(min: number, validationOptions?: ValidationOptions) {
+  return function minWordsDecorator(
+    object: object,
+    propertyName: string,
+  ): void {
+    registerDecorator({
+      target: object.constructor,
+      propertyName,
+      options: validationOptions,
+      constraints: [min],
+      validator: MinWordsConstraint,
+    });
+  };
+}

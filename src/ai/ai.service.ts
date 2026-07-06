@@ -2,10 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { AppConfig } from '../config/configuration';
 import {
+  callGeminiChat,
   callGeminiContent,
   GEMINI_AUTOCOMPLETE_MODELS,
+  GEMINI_GENERATION_MODELS,
   hasGeminiApiKey,
   isGeminiQuotaError,
+  pickGeminiErrorMessage,
 } from './gemini.util';
 
 /** Kvota tugaganda qayta urinishdan oldin kutish (ms) */
@@ -18,6 +21,30 @@ export type AiCompleteResult = {
   source: 'ai' | 'local';
   aiUnavailable?: boolean;
 };
+
+export type AiChatHistoryItem = {
+  role: 'user' | 'assistant';
+  content: string;
+};
+
+export type AiChatResult = {
+  reply: string;
+  source: 'ai' | 'local';
+  aiUnavailable?: boolean;
+};
+
+const CHAT_SYSTEM_INSTRUCTION = [
+  'Sen Maqolas platformasining AI yordamchisisan.',
+  'Foydalanuvchiga o\'zbek tilida aniq, foydali va do\'stona javob ber.',
+  'Maqola yozish, mavzular, texnologiya va umumiy savollarga yordam berasan.',
+  'Javoblaring qisqa va tushunarli bo\'lsin, kerak bo\'lsa ro\'yxat ishlat.',
+  'Xavfli, noqonuniy yoki zararli so\'rovlarga javob bermagin.',
+].join('\n');
+
+const CHAT_FALLBACK_REPLIES = [
+  'Hozircha AI xizmati vaqtincha band. Birozdan keyin qayta urinib ko\'ring.',
+  'So\'rovingizni qabul qildim, lekin hozir javob bera olmayapman. Keyinroq urinib ko\'ring.',
+];
 
 @Injectable()
 export class AiService {
@@ -32,7 +59,9 @@ export class AiService {
     return Date.now() < this.geminiQuotaBlockedUntil;
   }
 
-  private handleGeminiQuotaExceeded(context: 'autocomplete' | 'proofread'): void {
+  private handleGeminiQuotaExceeded(
+    context: 'autocomplete' | 'proofread' | 'chat',
+  ): void {
     this.geminiQuotaBlockedUntil = Date.now() + GEMINI_QUOTA_COOLDOWN_MS;
 
     const now = Date.now();
@@ -47,7 +76,7 @@ export class AiService {
   }
 
   private logGeminiErrors(
-    context: 'autocomplete' | 'proofread',
+    context: 'autocomplete' | 'proofread' | 'chat',
     errors: string[],
   ): void {
     if (isGeminiQuotaError(errors)) {
@@ -94,6 +123,75 @@ export class AiService {
     const lastAt = this.lastCompleteAtByUser.get(userId);
     if (!lastAt) return false;
     return Date.now() - lastAt < AUTOCOMPLETE_MIN_INTERVAL_MS;
+  }
+
+  async chat(
+    message: string,
+    history: AiChatHistoryItem[] = [],
+  ): Promise<AiChatResult> {
+    const trimmed = message.trim();
+    if (!trimmed) {
+      return { reply: '', source: 'local' };
+    }
+
+    if (this.isGeminiQuotaBlocked()) {
+      return {
+        reply: CHAT_FALLBACK_REPLIES[0],
+        source: 'local',
+        aiUnavailable: true,
+      };
+    }
+
+    const apiKey = this.config.get('geminiApiKey', { infer: true });
+    if (!apiKey || !hasGeminiApiKey(apiKey)) {
+      return {
+        reply:
+          'AI xizmati hozircha sozlanmagan. Administrator bilan bog\'laning yoki keyinroq urinib ko\'ring.',
+        source: 'local',
+      };
+    }
+
+    const recentHistory = history.slice(-20);
+    const messages = [
+      ...recentHistory.map((item) => ({
+        role: item.role === 'assistant' ? ('model' as const) : ('user' as const),
+        content: item.content,
+      })),
+      { role: 'user' as const, content: trimmed },
+    ];
+
+    const result = await callGeminiChat(
+      apiKey,
+      {
+        systemInstruction: CHAT_SYSTEM_INSTRUCTION,
+        messages,
+        maxOutputTokens: 2048,
+        temperature: 0.75,
+      },
+      GEMINI_GENERATION_MODELS,
+    );
+
+    if (result.errors.length > 0) {
+      this.logGeminiErrors('chat', result.errors);
+    }
+
+    if (result.text) {
+      return { reply: result.text.slice(0, 8000), source: 'ai' };
+    }
+
+    if (isGeminiQuotaError(result.errors)) {
+      this.handleGeminiQuotaExceeded('chat');
+      return {
+        reply: CHAT_FALLBACK_REPLIES[0],
+        source: 'local',
+        aiUnavailable: true,
+      };
+    }
+
+    return {
+      reply: pickGeminiErrorMessage(result.errors),
+      source: 'local',
+    };
   }
 
   async proofread(text: string): Promise<{ text: string; source: 'ai' | 'local' }> {

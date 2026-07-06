@@ -15,6 +15,9 @@ export const NOTIFICATION_TYPES = [
   'admin_welcome_promo_comment',
   'admin_comment_report',
   'admin_new_user',
+  'admin_feedback_review',
+  'feedback_approved',
+  'feedback_rejected',
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

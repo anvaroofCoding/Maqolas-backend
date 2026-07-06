@@ -2,10 +2,10 @@ export function hasGeminiApiKey(apiKey: string | undefined | null): boolean {
   return Boolean(apiKey?.trim());
 }
 
-/** Kvota tejash uchun avval yengil model, keyin kuchliroq model */
+/** Kvota tejash uchun avval barqaror model, keyin yengil model */
 export const GEMINI_GENERATION_MODELS = [
-  { name: 'gemini-2.5-flash-lite', maxOutputTokens: 65536 },
   { name: 'gemini-2.5-flash', maxOutputTokens: 65536 },
+  { name: 'gemini-2.5-flash-lite', maxOutputTokens: 65536 },
 ] as const;
 
 export const GEMINI_AUTOCOMPLETE_MODELS = [
@@ -24,6 +24,110 @@ export type GeminiCallResult = {
   text: string | null;
   errors: string[];
 };
+
+export type GeminiChatMessage = {
+  role: 'user' | 'model';
+  content: string;
+};
+
+export type GeminiChatOptions = {
+  systemInstruction?: string;
+  messages: GeminiChatMessage[];
+  maxOutputTokens: number;
+  temperature?: number;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function callGeminiChat(
+  apiKey: string,
+  options: GeminiChatOptions,
+  models: readonly { name: string; maxOutputTokens: number }[] = GEMINI_GENERATION_MODELS,
+): Promise<GeminiCallResult> {
+  const errors: string[] = [];
+  const contents = options.messages.map((message) => ({
+    role: message.role,
+    parts: [{ text: message.content }],
+  }));
+
+  for (const model of models) {
+    const maxOutputTokens = Math.min(options.maxOutputTokens, model.maxOutputTokens);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model.name}:generateContent?key=${encodeURIComponent(apiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...(options.systemInstruction
+                ? {
+                    systemInstruction: {
+                      parts: [{ text: options.systemInstruction }],
+                    },
+                  }
+                : {}),
+              contents,
+              generationConfig: {
+                temperature: options.temperature ?? 0.7,
+                maxOutputTokens,
+              },
+            }),
+          },
+        );
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          const message = parseGeminiApiError(response.status, errorBody);
+          const entry = `${model.name}: ${message}`;
+          if (!errors.includes(entry)) {
+            errors.push(entry);
+          }
+
+          if (response.status === 429) {
+            break;
+          }
+
+          if (response.status === 503 || response.status === 500) {
+            if (attempt === 0) {
+              await sleep(1800);
+              continue;
+            }
+            break;
+          }
+
+          break;
+        }
+
+        const payload = (await response.json()) as {
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+          }>;
+        };
+
+        const text =
+          payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
+
+        if (text) {
+          return { text, errors };
+        }
+
+        errors.push(`${model.name}: bo'sh javob`);
+        break;
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'noma\'lum xatolik';
+        errors.push(`${model.name}: ${message}`);
+        break;
+      }
+    }
+  }
+
+  return { text: null, errors };
+}
 
 export async function callGeminiContent(
   apiKey: string,
@@ -74,6 +178,14 @@ export async function callGeminiContent(
 
           // Kvota xatolarida qayta urinish limitni tezroq tugatadi
           if (response.status === 429) {
+            break;
+          }
+
+          if (response.status === 503 || response.status === 500) {
+            if (attempt === 0) {
+              await sleep(1800);
+              continue;
+            }
             break;
           }
 
@@ -167,6 +279,10 @@ export function parseGeminiApiError(status: number, body: string): string {
 
     if (status === 429 || message.toLowerCase().includes('quota')) {
       return 'Gemini API limiti tugagan. Biroz kutib qayta urinib ko\'ring yoki Google AI Studio da kvotani tekshiring.';
+    }
+
+    if (status === 503) {
+      return 'AI xizmati hozir band. Bir necha daqiqadan keyin qayta urinib ko\'ring.';
     }
 
     if (status === 401 || status === 403 || message.toLowerCase().includes('api key')) {

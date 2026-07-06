@@ -137,6 +137,34 @@ export type ArticleOutline = {
   sections: ArticleOutlineSection[];
 };
 
+export function buildCondensedUserBrief(userPrompt: string, maxWords = 400): string {
+  const lines = userPrompt
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const numbered = lines.filter((line) => /^\d+[\.\)]\s/.test(line));
+  const picked: string[] = [];
+
+  if (numbered.length > 0) {
+    picked.push(...numbered.slice(0, 12));
+  }
+
+  const prose = lines.filter((line) => !/^\d+[\.\)]\s/.test(line)).join(' ');
+  if (prose) {
+    picked.unshift(prose);
+  }
+
+  const combined = picked.join('\n');
+  const words = combined.split(/\s+/).filter(Boolean);
+
+  if (words.length <= maxWords) {
+    return combined;
+  }
+
+  return `${words.slice(0, maxWords).join(' ')}...`;
+}
+
 export function buildArticleGenerationPrompt(
   userPrompt: string,
   targetWords: number,
@@ -184,8 +212,9 @@ export function buildSectionPrompt(
   articleTitle: string,
   sections: ArticleOutlineSection[],
   batchStart: number,
+  batchSize = 1,
 ): string {
-  const batch = sections.slice(batchStart, batchStart + 1);
+  const batch = sections.slice(batchStart, batchStart + batchSize);
   const batchWords = batch.reduce((sum, section) => sum + section.targetWords, 0);
   const sectionPlan = batch
     .map(
@@ -198,7 +227,9 @@ export function buildSectionPrompt(
 
   return [
     'Sen professional o\'zbek tilida badiiy-publitsistik maqola yozuvchi ekspertsan.',
-    'Berilgan reja bo\'yicha faqat BITTA bo\'limni yoz.',
+    batch.length > 1
+      ? 'Berilgan reja bo\'yicha bir nechta ketma-ket bo\'limlarni yoz.'
+      : 'Berilgan reja bo\'yicha faqat BITTA bo\'limni yoz.',
     '',
     CORE_WRITING_RULES,
     '',
@@ -221,7 +252,7 @@ export function buildSectionPrompt(
     '{"contentHtml":"<h2>...</h2><p>...</p>..."}',
     '',
     '=== FOYDALANUVCHI TALABI (QAT\'IY BAJARILSIN) ===',
-    userPrompt,
+    buildCondensedUserBrief(userPrompt),
   ].join('\n');
 }
 

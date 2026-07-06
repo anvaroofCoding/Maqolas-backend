@@ -68,6 +68,14 @@ export const rtTags = {
   welcomePromoModeration: (): RealtimeTag[] => [
     { type: 'WelcomePromoComment', id: 'MODERATION' },
   ],
+  feedbackList: (): RealtimeTag[] => [
+    { type: 'Feedback', id: 'LIST' },
+    { type: 'Feedback', id: 'TOP' },
+  ],
+  feedbackModeration: (): RealtimeTag[] => [
+    { type: 'Feedback', id: 'MODERATION' },
+    { type: 'Admin', id: 'FEEDBACK' },
+  ],
   aiArticle: (): RealtimeTag[] => [
     { type: 'AiArticle', id: 'QUOTA' },
     { type: 'AiArticle', id: 'ACTIVE' },

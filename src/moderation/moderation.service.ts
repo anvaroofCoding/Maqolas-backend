@@ -520,7 +520,9 @@ export class ModerationService implements OnModuleInit {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .select('displayName username email avatarUrl role createdAt lastLoginAt')
+        .select(
+          'displayName username email avatarUrl role createdAt lastLoginAt aiChatDailyLimit',
+        )
         .exec(),
       this.userModel.countDocuments(filter).exec(),
     ]);

@@ -20,6 +20,7 @@ import { DigestModule } from './digest/digest.module';
 import { PinsModule } from './pins/pins.module';
 import { SavedPhrasesModule } from './saved-phrases/saved-phrases.module';
 import { SearchIndexingModule } from './search-indexing/search-indexing.module';
+import { FeedbackModule } from './feedback/feedback.module';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { SearchIndexingModule } from './search-indexing/search-indexing.module';
     PinsModule,
     SavedPhrasesModule,
     SearchIndexingModule,
+    FeedbackModule,
   ],
 })
 export class AppModule {}

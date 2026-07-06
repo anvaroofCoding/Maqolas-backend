@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AiModule } from '../ai/ai.module';
 import { ArticleRequestsModule } from '../article-requests/article-requests.module';
 import { ArticlesModule } from '../articles/articles.module';
 import { AuthModule } from '../auth/auth.module';
@@ -7,16 +8,19 @@ import { CategoriesModule } from '../categories/categories.module';
 import { ModerationModule } from '../moderation/moderation.module';
 import { EmailModule } from '../email/email.module';
 import { WelcomePromoModule } from '../welcome-promo/welcome-promo.module';
+import { FeedbackModule } from '../feedback/feedback.module';
 import { AdminController } from './admin.controller';
 
 @Module({
   imports: [
     AuthModule,
+    AiModule,
     ArticlesModule,
     ArticleRequestsModule,
     CategoriesModule,
     BannersModule,
     WelcomePromoModule,
+    FeedbackModule,
     ModerationModule,
     EmailModule,
   ],
