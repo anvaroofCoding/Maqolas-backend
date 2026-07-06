@@ -106,6 +106,8 @@ export class WelcomePromoService implements OnModuleInit {
 
     const linkUrl = dto.linkUrl?.trim() || undefined;
     const linkLabel = dto.linkLabel?.trim() || undefined;
+    const badgeText = dto.badgeText?.trim() || undefined;
+    const badgeIcon = badgeText ? dto.badgeIcon?.trim() || 'badge-check' : undefined;
 
     const promo = await this.promoModel.create({
       title,
@@ -113,6 +115,8 @@ export class WelcomePromoService implements OnModuleInit {
       imageUrl: this.buildImageUrl(file.filename),
       linkUrl,
       linkLabel: linkUrl && linkLabel ? linkLabel : undefined,
+      badgeIcon,
+      badgeText,
       isActive,
     });
 
@@ -155,6 +159,22 @@ export class WelcomePromoService implements OnModuleInit {
       const linkLabel = dto.linkLabel.trim() || undefined;
       promo.linkLabel =
         promo.linkUrl && linkLabel ? linkLabel : undefined;
+    }
+
+    if (dto.badgeText !== undefined) {
+      const badgeText = dto.badgeText.trim() || undefined;
+      promo.badgeText = badgeText;
+      if (!badgeText) {
+        promo.badgeIcon = undefined;
+      } else if (!promo.badgeIcon) {
+        promo.badgeIcon = 'badge-check';
+      }
+    }
+
+    if (dto.badgeIcon !== undefined) {
+      const badgeIcon = dto.badgeIcon.trim() || undefined;
+      promo.badgeIcon =
+        promo.badgeText && badgeIcon ? badgeIcon : undefined;
     }
 
     if (dto.isActive !== undefined) {

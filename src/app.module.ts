@@ -19,6 +19,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { DigestModule } from './digest/digest.module';
 import { PinsModule } from './pins/pins.module';
 import { SavedPhrasesModule } from './saved-phrases/saved-phrases.module';
+import { SearchIndexingModule } from './search-indexing/search-indexing.module';
 
 @Module({
   imports: [
@@ -49,6 +50,7 @@ import { SavedPhrasesModule } from './saved-phrases/saved-phrases.module';
     DigestModule,
     PinsModule,
     SavedPhrasesModule,
+    SearchIndexingModule,
   ],
 })
 export class AppModule {}

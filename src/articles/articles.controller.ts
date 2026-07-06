@@ -95,6 +95,15 @@ export class ArticlesController {
     return { entries };
   }
 
+  @Get('slug/:slug/related')
+  async getRelatedBySlug(
+    @Param('slug') slug: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit ?? '6', 10) || 6, 1), 12);
+    return this.articlesService.findRelatedBySlug(slug, parsedLimit);
+  }
+
   @Get('slug/:slug')
   @UseGuards(OptionalJwtAuthGuard)
   async getBySlug(

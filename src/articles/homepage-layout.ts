@@ -252,10 +252,11 @@ export function buildHomepageLayout<T extends LayoutArticle>(
   });
 
   layout.leftLead = pickFromRanked({
-    count: 4,
+    count: 5,
     sortBy: 'spotlight',
     predicate: (item) => hasExcerpt(item.article),
-    diversifyAuthors: true,
+    diversifyAuthors: false,
+    allowReuseWhenSparse: true,
   });
 
   layout.centerList = pickFromRanked({

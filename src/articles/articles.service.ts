@@ -55,6 +55,7 @@ import { APPROVED_COMMENT_FILTER } from '../moderation/utils/approved-comment-fi
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../email/email.service';
 import { RealtimeService } from '../realtime/realtime.service';
+import { SearchIndexingService } from '../search-indexing/search-indexing.service';
 import { rtTags } from '../realtime/realtime-tags';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
@@ -74,6 +75,7 @@ import {
   type LayoutArticle,
 } from './homepage-layout';
 import { syncFigureLayoutInHtml } from './article-html-layout';
+import { optimizeArticleImagesHtml } from './article-image-html';
 import { runStringUserIdMigrationSafe } from '../common/migrate-string-user-ids';
 
 const NEW_ARTICLE_HOURS = 5;
@@ -116,6 +118,7 @@ export class ArticlesService implements OnModuleInit {
     private readonly moderationService: ModerationService,
     private readonly realtime: RealtimeService,
     private readonly config: ConfigService<AppConfig, true>,
+    private readonly searchIndexingService: SearchIndexingService,
   ) {}
 
   async onModuleInit() {
@@ -562,6 +565,10 @@ export class ArticlesService implements OnModuleInit {
 
     await article.save();
 
+    if (article.status === 'published') {
+      this.searchIndexingService.notifyArticlePublished(article.slug);
+    }
+
     this.realtime.invalidate([
       ...rtTags.article(id),
       ...rtTags.articleSlug(article.slug),
@@ -715,6 +722,8 @@ export class ArticlesService implements OnModuleInit {
       ...rtTags.adminPublished(),
       ...rtTags.adminStats(),
     ], { userId: article.authorId.toString(), admin: true });
+
+    this.searchIndexingService.notifyArticlePublished(article.slug);
 
     return this.findModerationArticleById(id);
   }
@@ -1796,6 +1805,35 @@ export class ArticlesService implements OnModuleInit {
     return this.toPublicArticle(article, { includeContentJson: true });
   }
 
+  async findRelatedBySlug(slug: string, limit = 6) {
+    const article = await this.articleModel
+      .findOne({ slug, status: 'published' })
+      .select('categoryIds')
+      .lean()
+      .exec();
+
+    if (!article?.categoryIds?.length) {
+      return { articles: [] };
+    }
+
+    const cappedLimit = Math.min(Math.max(limit, 1), 12);
+    const related = await this.articleModel
+      .find({
+        status: 'published',
+        _id: { $ne: article._id },
+        categoryIds: { $in: article.categoryIds },
+      })
+      .sort({ publishedAt: -1, createdAt: -1 })
+      .limit(cappedLimit)
+      .populate('authorId', 'displayName username avatarUrl')
+      .populate('categoryIds', 'name slug')
+      .exec();
+
+    return {
+      articles: related.map((item) => this.toFeedArticle(item)),
+    };
+  }
+
   async listPublishedForSitemap() {
     const articles = await this.articleModel
       .find({ status: 'published' })
@@ -2130,16 +2168,21 @@ export class ArticlesService implements OnModuleInit {
     contentHtml: string,
     contentJson?: Record<string, unknown>,
   ) {
-    if (!contentJson) return contentHtml;
-    return syncFigureLayoutInHtml(contentHtml, contentJson);
+    const withLayout = contentJson
+      ? syncFigureLayoutInHtml(contentHtml, contentJson)
+      : contentHtml;
+    return optimizeArticleImagesHtml(withLayout);
   }
 
   private applyFigureLayoutToArticle(article: ArticleDocument) {
-    if (!article.contentHtml || !article.contentJson) return;
-    article.contentHtml = syncFigureLayoutInHtml(
-      article.contentHtml,
-      article.contentJson as Record<string, unknown>,
-    );
+    if (!article.contentHtml) return;
+    if (article.contentJson) {
+      article.contentHtml = syncFigureLayoutInHtml(
+        article.contentHtml,
+        article.contentJson as Record<string, unknown>,
+      );
+    }
+    article.contentHtml = optimizeArticleImagesHtml(article.contentHtml);
   }
 
   private async ensureUniqueSlug(base: string, excludeId?: string) {

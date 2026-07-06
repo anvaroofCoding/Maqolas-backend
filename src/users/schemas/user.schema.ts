@@ -46,13 +46,13 @@ export class User {
   @Prop({ type: String, required: true, unique: true, lowercase: true, trim: true })
   username!: string;
 
-  @Prop({ type: String, required: true, trim: true })
+  @Prop({ type: String, required: true, trim: true, maxlength: 20 })
   displayName!: string;
 
   @Prop({ type: Boolean, default: false })
   displayNameEdited!: boolean;
 
-  @Prop({ type: String, trim: true, maxlength: 280 })
+  @Prop({ type: String, trim: true, maxlength: 100 })
   bio?: string;
 
   @Prop({ type: String, trim: true })

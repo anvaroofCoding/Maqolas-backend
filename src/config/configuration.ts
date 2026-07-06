@@ -33,6 +33,11 @@ export interface AppConfig {
     timezone: string;
     minDaysBetween: number;
   };
+  searchIndexing: {
+    indexNowKey: string;
+    googleIndexingServiceAccountJson: string;
+    revalidateSecret: string;
+  };
 }
 
 export default (): AppConfig => ({
@@ -86,5 +91,12 @@ export default (): AppConfig => ({
     cron: (process.env.WEEKLY_DIGEST_CRON ?? '0 10 * * 0').trim(),
     timezone: (process.env.WEEKLY_DIGEST_TIMEZONE ?? 'Asia/Tashkent').trim(),
     minDaysBetween: parseInt(process.env.WEEKLY_DIGEST_MIN_DAYS ?? '7', 10),
+  },
+  searchIndexing: {
+    indexNowKey: (process.env.INDEXNOW_KEY ?? '').trim(),
+    googleIndexingServiceAccountJson: (
+      process.env.GOOGLE_INDEXING_SERVICE_ACCOUNT_JSON ?? ''
+    ).trim(),
+    revalidateSecret: (process.env.REVALIDATE_SECRET ?? '').trim(),
   },
 });

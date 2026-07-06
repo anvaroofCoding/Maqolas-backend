@@ -31,6 +31,12 @@ export class WelcomePromo {
   @Prop({ type: String, trim: true, maxlength: 100 })
   linkLabel?: string;
 
+  @Prop({ type: String, trim: true, maxlength: 32 })
+  badgeIcon?: string;
+
+  @Prop({ type: String, trim: true, maxlength: 80 })
+  badgeText?: string;
+
   @Prop({ type: Boolean, default: false, index: true })
   isActive!: boolean;
 

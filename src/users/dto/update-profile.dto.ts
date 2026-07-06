@@ -33,12 +33,12 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsString()
   @MinLength(2)
-  @MaxLength(64)
+  @MaxLength(20)
   displayName?: string;
 
   @IsOptional()
   @IsString()
-  @MaxLength(280)
+  @MaxLength(100)
   bio?: string;
 
   @IsOptional()
